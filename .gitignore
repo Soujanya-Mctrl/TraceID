@@ -1,0 +1,80 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+.env
+.env.*
+!.env.example
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Testing & Caches
+.pytest_cache/
+.hypothesis/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Deep learning weights & caches
+.deepface/
+weights/
+*.h5
+*.keras
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Project output / temporary data
+output/*
+!output/.gitkeep
+live_capture.jpg
+live_face_crop.jpg
+face_crop.jpg
+camera_scan.jpg
+cache/
+tmp/
+*.log
+
+# Blockchain artifacts
+artifacts/
+cache_blockchain/
+.openzeppelin/
+
+# Operating System
+.DS_Store
+Thumbs.db
+desktop.ini

@@ -1,0 +1,76 @@
+{
+  "contractName": "FaceVerificationRegistry",
+  "abi": [
+    {
+      "anonymous": false,
+      "inputs": [
+        { "indexed": true, "internalType": "bytes32", "name": "recordHash", "type": "bytes32" },
+        { "indexed": true, "internalType": "bytes32", "name": "faceHash", "type": "bytes32" },
+        { "indexed": false, "internalType": "string", "name": "postUrl", "type": "string" },
+        { "indexed": true, "internalType": "address", "name": "submitter", "type": "address" },
+        { "indexed": false, "internalType": "uint256", "name": "timestamp", "type": "uint256" }
+      ],
+      "name": "RecordAnchored",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        { "indexed": true, "internalType": "bytes32", "name": "recordHash", "type": "bytes32" },
+        { "indexed": false, "internalType": "bool", "name": "exists", "type": "bool" },
+        { "indexed": true, "internalType": "address", "name": "verifier", "type": "address" }
+      ],
+      "name": "VerificationQueried",
+      "type": "event"
+    },
+    {
+      "inputs": [
+        { "internalType": "bytes32", "name": "recordHash", "type": "bytes32" },
+        { "internalType": "bytes32", "name": "faceHash", "type": "bytes32" },
+        { "internalType": "bytes32", "name": "postContentHash", "type": "bytes32" },
+        { "internalType": "string", "name": "postUrl", "type": "string" },
+        { "internalType": "string", "name": "platform", "type": "string" }
+      ],
+      "name": "anchorRecord",
+      "outputs": [{ "internalType": "bool", "name": "", "type": "bool" }],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [{ "internalType": "bytes32", "name": "recordHash", "type": "bytes32" }],
+      "name": "verifyRecord",
+      "outputs": [
+        { "internalType": "bool", "name": "exists", "type": "bool" },
+        { "internalType": "bytes32", "name": "faceHash", "type": "bytes32" },
+        { "internalType": "bytes32", "name": "postContentHash", "type": "bytes32" },
+        { "internalType": "string", "name": "postUrl", "type": "string" },
+        { "internalType": "string", "name": "platform", "type": "string" },
+        { "internalType": "uint256", "name": "timestamp", "type": "uint256" },
+        { "internalType": "address", "name": "submitter", "type": "address" }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [{ "internalType": "bytes32", "name": "recordHash", "type": "bytes32" }],
+      "name": "isRecordValid",
+      "outputs": [{ "internalType": "bool", "name": "", "type": "bool" }],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getRecordCount",
+      "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [{ "internalType": "uint256", "name": "index", "type": "uint256" }],
+      "name": "getRecordHashByIndex",
+      "outputs": [{ "internalType": "bytes32", "name": "", "type": "bytes32" }],
+      "stateMutability": "view",
+      "type": "function"
+    }
+  ]
+}
