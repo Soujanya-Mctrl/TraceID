@@ -117,26 +117,38 @@ HH-task3/
 
 ---
 
-### Part 1: Face Detection & Encoding
-- **Module**: `src/face_engine/`
+### Part 1: Face Detection, Quality Scoring & Encoding
+- **Module**: [`src/face_detection/`](src/face_detection/)
 - **Responsibilities**:
-  - Localizes faces within any input image and computes normalized bounding box coordinates.
-  - Crops and pre-processes the face to standardized 160×160 RGB tensors.
-  - Passes features through a deep convolutional feature extractor producing an affine-invariant **512-dimensional normalized vector embedding**.
-  - Derives a deterministic cryptographic **Biometric Hash (SHA-256)** for tamper-proof registry on-chain.
+  - Localizes faces within any input image and computes normalized bounding box coordinates using DeepFace/MTCNN.
+  - **Facial Landmark & Quality Scoring** ([`quality.py`](src/face_detection/quality.py)):
+    - **Blur Score**: Laplacian variance on the face crop ($\ge 60.0$). Rejects motion blur or unfocused webcams.
+    - **Roll Tilt**: Angular tilt in degrees derived from anatomical eye line ($\le 25^\circ$). Corrects for anatomical left/right coordinate sorting.
+    - **Frontality (Yaw Proxy)**: Measures eye symmetry relative to horizontal bounding center ($\le 0.45$). Rejects extreme profile angles.
+    - **Composite Quality Gate**: Computes a normalized $[0, 1]$ quality score; rejects degraded frames (`min_quality=0.55`).
+  - **Contextual Cropping**: Crops face with 30% padding so contextual features (hair, head contours) are preserved for reverse visual search.
+  - **Feature Extraction**: Produces an affine-invariant **512-dimensional normalized vector embedding** via Facenet512.
+  - **Biometric Hash**: Derives a deterministic cryptographic hash for on-chain anchoring.
 
-### Part 2: Web & Social Media Search
-- **Module**: `src/social_search/`
+### Part 2: Web & Social Media Search with Embedding Verification
+- **Module**: [`src/web_search/`](src/web_search/)
+- **Dual Visual Search Backends**:
+  - **SerpAPI (Google Lens)** (`SEARCH_BACKEND=serp`): Optimized two-stage upload architecture for local images (webcam captures & face crops):
+    1. `POST https://serpapi.com/image` (multipart local file) $\to$ returns ephemeral `image_id` (valid 10 minutes, 500KB limit). Large full-resolution webcam captures are automatically downsampled/compressed under 500KB.
+    2. `GET https://serpapi.com/search?engine=google_lens&image_id=<id>&type=all` $\to$ harvests both `exact_matches` and `visual_matches` in **a single credit** instead of two.
+  - **Google Cloud Vision** (`SEARCH_BACKEND=vision`): Direct base64 Web Detection query (`pagesWithMatchingImages` + `visuallySimilarImages`).
+  - **Scripted Fallback** (`SEARCH_BACKEND=scripted`): Deterministic social metadata provider for offline/sandboxed evaluation.
 - **Responsibilities**:
-  - Executes a **genuine reverse visual search** using the face crop to find matching public posts across social networks (e.g. X/Twitter, LinkedIn, Instagram, Reddit, GitHub).
-  - Supports multiple backends:
-    1. **SerpApi (Google Lens engine)**: For API-powered reverse visual lookup.
-    2. **Scripted Search Engine**: Automated query execution targeting social media platforms without requiring paid API keys.
-  - Parses the discovered post to extract canonical URL, author, platform, post text snippet, and media URLs.
-  - Computes a cryptographic SHA-256 fingerprint over the post's content and media.
+  - **Query Order**: Searches the full scan image first (best for existing posted photos), then the tight face crop as fallback.
+  - **Candidate Harvesting**: Standardizes results across backends into uniform candidate schemas (`page_url`, `image_url`, `page_title`, `is_social`, `match_type`).
+  - **Face Verification Layer**: Does NOT trust search hits blindly. Downloads each candidate image, runs it through the same DeepFace detector, and computes **cosine similarity** between the original face embedding and **every face detected in the candidate image** (safely handles group photos).
+  - **Verification Threshold**: Compares similarity against `VERIFY_SIMILARITY_THRESHOLD = 0.55`.
+  - **Ranking Hierarchy**:
+    $$\text{Verified Social} > \text{Verified General Web} > \text{Unverified Candidate (explicitly flagged)}$$
+  - **Cryptographic Fingerprint**: Computes a SHA-256 fingerprint over post URL, author, caption, and media for on-chain anchoring.
 
 ### Part 3: Blockchain Verification
-- **Module**: `src/blockchain_verifier/`
+- **Module**: [`src/blockchain/`](src/blockchain/)
 - **Responsibilities**:
   - Synthesizes a composite 32-byte cryptographic record:  
     $$\text{RecordHash} = \text{Keccak256}(\text{FaceHash} \parallel \text{PostURL} \parallel \text{PostContentHash} \parallel \text{Timestamp})$$
@@ -145,7 +157,7 @@ HH-task3/
   - Flags any tampering if even a single character of the post URL, caption, or biometric hash is modified.
 
 ### Part 4: Glue Script
-- **Module**: `run_pipeline.py` & `src/pipeline/`
+- **Module**: [`main.py`](main.py) & [`src/pipeline/`](src/pipeline/)
 - **Responsibilities**:
   - Glues all components into a single seamless CLI pipeline.
   - Runs face scan → social discovery → blockchain anchor → tamper verification.
@@ -162,14 +174,14 @@ This project supports **Dual-Mode Blockchain Operation**:
    - Built directly into the client with real SHA-256 block hashing, parent block pointers, merkle transactions, state transitions, and cryptographic verification.
    - **Why this is ideal for evaluation**: Runs offline with zero network latency, zero gas/faucet dependencies, and 100% reliability during screen recordings.
 2. **EVM Testnets / Local RPC (`sepolia`, `polygon_amoy`, or `local_rpc`)**:
-   - Deploys and interacts with the included Solidity smart contract [`contracts/FaceVerificationRegistry.sol`](file:///d:/Projects/HH-task3/contracts/FaceVerificationRegistry.sol).
+   - Deploys and interacts with the included Solidity smart contract [`contracts/FaceVerificationRegistry.sol`](contracts/FaceVerificationRegistry.sol).
    - Configurable via `.env` by providing an RPC URL and private key.
 
 ---
 
 ## 📜 Smart Contract Architecture
 
-The [`FaceVerificationRegistry.sol`](file:///d:/Projects/HH-task3/contracts/FaceVerificationRegistry.sol) contract defines:
+The [`FaceVerificationRegistry.sol`](contracts/FaceVerificationRegistry.sol) contract defines:
 
 ```solidity
 struct VerificationRecord {
@@ -264,7 +276,20 @@ python -m src.face_detection.detector samples/sample_faces/sample_person.jpg
 
 #### Segment 2: Web & Social Media Visual Search
 ```bash
-python -m src.web_search.searcher output/face_crop.jpg
+# Test SerpAPI Google Lens directly on local crop:
+python serp_search.py output/face_crop.jpg
+
+# Or run Google Vision / Web searcher directly:
+python web_search.py output/face_crop.jpg
+```
+
+#### Run Full Pipeline with Selected Backend:
+```bash
+# Using SerpAPI Google Lens:
+SEARCH_BACKEND=serp python pipeline.py samples/sample_faces/sample_person.jpg --demo-tamper
+
+# Or using Google Cloud Vision:
+SEARCH_BACKEND=vision python pipeline.py samples/sample_faces/sample_person.jpg --demo-tamper
 ```
 
 #### Segment 3: Blockchain Verification & Tamper Detection

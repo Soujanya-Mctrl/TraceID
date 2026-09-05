@@ -173,19 +173,20 @@ def scan_face(
     print(f"[Live Camera Scan] Saved captured frame to: {capture_path}")
 
     # Now run the REAL detection/encoding pass (DeepFace/MTCNN) on the
-    # captured frame, instead of trusting the cheap Haar cascade.
-    print("[Live Camera Scan] Running DeepFace (MTCNN + Facenet512) on captured frame...")
+    # captured frame, and gate on quality (blur, roll, yaw).
+    print("[Live Camera Scan] Running DeepFace (MTCNN + Facenet512) and quality gating on captured frame...")
     try:
-        face = best_face(capture_path)
+        face = best_face(capture_path, min_quality=0.55)
     except Exception as e:
         if os.path.exists(capture_path):
             os.remove(capture_path)
         raise RuntimeError(
-            f"Captured frame failed real detection ({e}). Try scanning again with better lighting."
+            f"Captured frame failed quality check ({e}). Try scanning again with better lighting or holding steadier."
         )
 
     crop_face(capture_path, face["facial_area"], crop_path, padding=0.3)
-    print(f"[Live Camera Scan] DeepFace Confirmed: Confidence {face['confidence']} | Crop saved to: {crop_path}")
+    q_score = face.get("quality", {}).get("quality_score", "N/A")
+    print(f"[Live Camera Scan] Confirmed Face: Confidence {face['confidence']} | Quality Score: {q_score} | Crop saved to: {crop_path}")
 
     return {
         "image_path": capture_path,

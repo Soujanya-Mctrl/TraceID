@@ -6,6 +6,7 @@ plus the cropped face region with 30% padding for visual reverse search.
 
 import os
 import sys
+from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 # Lazy DeepFace import
@@ -114,12 +115,48 @@ def crop_face(image_path: str, facial_area: dict, out_path: str, padding: float 
     return out_path
 
 
-def best_face(image_path: str, **kwargs):
-    """Returns the single highest-confidence face found in the image."""
+def best_face(
+    image_path: str,
+    select_by: str = "area",
+    face_index: Optional[int] = None,
+    min_quality: Optional[float] = None,
+    **kwargs,
+):
+    """
+    Returns a single target face from the image.
+
+    select_by:
+      "area"       -- (default) largest face by bounding-box area (most reliable for subject).
+      "confidence" -- highest detector confidence instead.
+    face_index:
+      If given, explicitly picks faces[face_index] (after sorting by select_by).
+    min_quality:
+      If given, gates on face quality score (blur, roll, yaw) and raises RuntimeError
+      if below threshold.
+    """
     faces = detect_and_encode(image_path, **kwargs)
     if not faces:
         raise RuntimeError(f"No face detected in {image_path}")
-    return max(faces, key=lambda f: (f.get("confidence") or 0))
+
+    if len(faces) > 1:
+        print(f"[face_detection] {len(faces)} faces detected in {image_path} -- selecting by '{select_by}'.")
+
+    key = (lambda f: f["facial_area"]["w"] * f["facial_area"]["h"]) if select_by == "area" else (lambda f: f.get("confidence") or 0)
+    ranked = sorted(faces, key=key, reverse=True)
+
+    chosen = ranked[face_index] if face_index is not None else ranked[0]
+
+    if min_quality is not None:
+        from src.face_detection.quality import score_face
+        quality = score_face(image_path, chosen)
+        if quality["quality_score"] < min_quality:
+            reasons_str = ", ".join(quality["reasons"]) or "score below threshold"
+            raise RuntimeError(
+                f"Face quality too low ({quality['quality_score']:.2f} < {min_quality}): {reasons_str}"
+            )
+        chosen = {**chosen, "quality": quality}
+
+    return chosen
 
 
 if __name__ == "__main__":
@@ -132,6 +169,8 @@ if __name__ == "__main__":
     print(f"Confidence: {face['confidence']}")
     print(f"Facial area: {face['facial_area']}")
     print(f"Embedding dimensions: {len(face['embedding'])}")
+    if "quality" in face:
+        print(f"Quality Score: {face['quality']['quality_score']}")
 
     out_file = os.path.join("output", "face_crop.jpg")
     crop_out = crop_face(img_path, face["facial_area"], out_file)

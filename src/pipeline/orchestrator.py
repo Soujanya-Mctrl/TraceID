@@ -10,12 +10,24 @@ import os
 import sys
 import time
 from typing import Any, Dict, List, Optional, TypedDict
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from langgraph.graph import StateGraph, END
 
 # Import the 3 modular segments from src
 from src.face_detection import best_face, crop_face
-from src.web_search import search_web_for_face
+from src.web_search import find_and_verify_match, search_web_for_face, serp_search
+import src.web_search.searcher as web_search_module
 from src.blockchain import anchor_post_record, reverify_against_chain
+
+
+def _get_search_backend():
+    backend = os.environ.get("SEARCH_BACKEND", "vision").lower()
+    if backend in ("serp", "serpapi", "google_lens"):
+        return "serp", serp_search.reverse_image_search
+    return backend, web_search_module.reverse_image_search
 
 
 class PipelineState(TypedDict, total=False):
@@ -25,8 +37,15 @@ class PipelineState(TypedDict, total=False):
     face_embedding: Optional[List[float]]
     face_confidence: Optional[float]
     face_crop_path: Optional[str]
-    # Segment 2: Web & Social Search
+    # Segment 2: Web & Social Search + Face Verification
     matched_url: Optional[str]
+    matched_page_url: Optional[str]
+    matched_image_url: Optional[str]
+    matched_page_title: Optional[str]
+    match_verified: Optional[bool]
+    match_similarity: Optional[float]
+    match_is_social: Optional[bool]
+    match_note: Optional[str]
     post_platform: Optional[str]
     post_author: Optional[str]
     content_fingerprint: Optional[str]
@@ -74,27 +93,45 @@ def face_detect_node(state: PipelineState) -> PipelineState:
 
 
 def web_search_node(state: PipelineState) -> PipelineState:
-    """Node 2: Web & Social Media Visual Search."""
+    """Node 2: Web & Social Media Visual Search with Face Embedding Verification."""
     if state.get("error"):
         return state
 
     try:
-        print("\n[Stage 2: Web Search] Searching web & social platforms for matching post...")
-        matches = search_web_for_face(state["face_crop_path"])
-        if not matches:
-            return {**state, "error": "No matching social media posts discovered."}
+        backend_name, search_fn = _get_search_backend()
+        print(f"\n[Stage 2: Web Search] Harvesting candidates via [{backend_name.upper()}] & verifying against face embedding...")
+        match = find_and_verify_match(
+            image_path=state.get("image_path") or state.get("face_crop_path"),
+            original_embedding=state["face_embedding"],
+            face_crop_path=state.get("face_crop_path"),
+            search_fn=search_fn,
+        )
+        if not match:
+            return {**state, "error": "web_search failed: no candidates found at all"}
 
-        top_post = matches[0]
-        print(f"  Discovered Post: {top_post['url']}")
-        print(f"  Platform: {top_post['platform']} | Author: {top_post['author']}")
-        print(f"  Content Fingerprint: {top_post['content_fingerprint']}")
+        matched_url = match.get("url") or match.get("page_url") or match.get("image_url")
+        print(f"  Discovered Post:    {matched_url}")
+        print(f"  Platform:           {match.get('platform')} | Author: {match.get('author')}")
+        print(f"  Face Match Status:  {'VERIFIED' if match.get('verified') else 'UNVERIFIED'}")
+        if match.get("similarity") is not None:
+            print(f"  Cosine Similarity:  {match.get('similarity')}")
+        if match.get("note"):
+            print(f"  Audit Note:         {match.get('note')}")
+        print(f"  Content Fingerprint:{match.get('content_fingerprint')}")
 
         return {
             **state,
-            "matched_url": top_post["url"],
-            "post_platform": top_post["platform"],
-            "post_author": top_post["author"],
-            "content_fingerprint": top_post["content_fingerprint"],
+            "matched_url": matched_url,
+            "matched_page_url": match.get("page_url"),
+            "matched_image_url": match.get("image_url"),
+            "matched_page_title": match.get("page_title", ""),
+            "match_verified": match.get("verified", False),
+            "match_similarity": match.get("similarity"),
+            "match_is_social": match.get("is_social"),
+            "match_note": match.get("note", ""),
+            "post_platform": match.get("platform"),
+            "post_author": match.get("author"),
+            "content_fingerprint": match.get("content_fingerprint"),
         }
     except Exception as e:
         return {**state, "error": f"web_search failed: {e}"}
@@ -196,6 +233,9 @@ def run(image_path: Optional[str] = None, use_camera: bool = False, demo_tamper:
     print("PIPELINE COMPLETED SUCCESSFULLY [OK]")
     print(f"  Captured Scan:       {result.get('image_path')}")
     print(f"  Matched Post URL:    {result['matched_url']}")
+    print(f"  Face Match Status:   {'VERIFIED' if result.get('match_verified') else 'UNVERIFIED'}")
+    if result.get('match_similarity') is not None:
+        print(f"  Cosine Similarity:   {result.get('match_similarity')}")
     print(f"  Blockchain Block:    #{result['block_number']}")
     print(f"  Transaction Hash:    {result['tx_hash']}")
     print(f"  On-Chain Verified:   {result['is_verified']}")
