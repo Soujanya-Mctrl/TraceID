@@ -86,27 +86,35 @@ This project implements an authentic, production-grade identity attestation pipe
 
 ```
 HH-task3/
-├── main.py                          # Unified CLI entrypoint with camera & tamper flags
-├── pipeline.py                      # Root LangGraph pipeline runner
-├── serp_search.py                   # Standalone SerpAPI Google Lens visual search CLI
-├── web_search.py                    # Standalone Web Search & verification CLI
-├── chain.py                         # Privacy-preserving blockchain anchoring & verification
 ├── requirements.txt                 # Project dependencies
-├── contract_abi.json                # Pre-compiled ABI for PostVerifier contract
 ├── .env.example                     # Environment template
 ├── .gitignore                       # Version control rules
 ├── README.md                        # Project documentation
 ├── ARCHITECTURE.md                  # Comprehensive technical specification & diagrams
 │
-├── contracts/                       # Smart contracts
+├── web/                             # Full-Stack Web Application
+│   ├── server/                      # FastAPI Backend (REST endpoints, static mounting & pipeline runner)
+│   │   ├── server.py
+│   │   └── __init__.py
+│   └── client/                      # Modern React Frontend (Vite, Tailwind-inspired CSS, Lucide icons)
+│       ├── src/                     # React components, webcam HUD, stepper & styles
+│       ├── dist/                    # Production distribution bundle
+│       └── package.json             # Frontend dependencies
+│
+├── contracts/                       # Smart contracts & pre-compiled ABIs
 │   ├── PostVerifier.sol             # Privacy-preserving metadata anchoring contract
+│   ├── PostVerifier.json            # Pre-compiled ABI for PostVerifier contract
 │   ├── FaceVerificationRegistry.sol # Extended registry contract
 │   └── FaceVerificationRegistry.json# Pre-compiled registry ABI
 │
 ├── scripts/                         # Automation & deployment scripts
 │   └── deploy.py                    # Compiles & deploys PostVerifier.sol via py-solc-x
 │
-├── src/                             # Core modular packages
+├── src/                             # Core modular package
+│   ├── __init__.py                  # Package exports
+│   ├── __main__.py                  # Enables `python -m src` CLI execution
+│   ├── main.py                      # Unified CLI entrypoint (pipeline, camera HUD, web server, SerpAPI)
+│   │
 │   ├── face_detection/              # SEGMENT 1: Face Detection, Quality & Embeddings
 │   │   ├── camera.py                # 2-tier live webcam capture (Haar tracking + MTCNN)
 │   │   ├── detector.py              # MTCNN detector, 30% padding crop, Facenet512 encoder
@@ -117,6 +125,7 @@ HH-task3/
 │   │   └── searcher.py              # Google Vision / Fallback & in-image face verification
 │   │
 │   ├── blockchain/                  # SEGMENT 3: Blockchain Anchoring & Verification
+│   │   ├── chain.py                 # Polygon Amoy EVM Web3 smart contract interaction & canonical hashing
 │   │   └── verifier.py              # Cryptographic verification & in-process ledger
 │   │
 │   └── pipeline/                    # SEGMENT 4: Orchestrator
@@ -191,14 +200,31 @@ CONTRACT_ADDRESS=your_deployed_contract_address
 
 ## 🎮 How to Run
 
-### 1. Full Pipeline Execution
-Run the end-to-end LangGraph pipeline on any image:
+### 1. Interactive Web Application (FastAPI + React) 🌐
+Launch the unified full-stack web application:
 ```bash
-python pipeline.py samples/sample_faces/sample_person.jpg
+python -m src --server
+# or directly:
+python web/server/server.py
 ```
-Or via `main.py`:
+Open **[http://localhost:8000](http://localhost:8000)** in any modern web browser.
+- **Live HTML5 Webcam HUD**: Center your face in the reticle and click **"Capture Face Scan"**.
+- **Drag & Drop File Upload**: Drop any portrait photo or click **"Load Sample Face"** for instant 1-click evaluation.
+- **Visual Pipeline Stepper**: Watch the 4 phases execute live with real-time progress indicators.
+- **Verification Details**: Inspect side-by-side face crops, cosine similarity score (e.g. 96.0%), platform badges, and on-chain transaction hash.
+- **Interactive Tamper Sandbox**: Click **"Test Forged URL Rejection"** to simulate modifying data and watch the blockchain catch and reject the tampering in real time.
+- **Audit Receipt Export**: 1-click download of the machine-readable cryptographic receipt JSON.
+
+*(For developers editing React with Vite hot-reload: run `npm run dev` inside `web/client/` on port 5173).*
+
+---
+
+### 2. Full CLI Pipeline Execution
+Run the end-to-end LangGraph pipeline on any image via Python's package execution:
 ```bash
-python main.py samples/sample_faces/sample_person.jpg
+python -m src samples/sample_faces/sample_person.jpg
+# or via direct script execution:
+python src/main.py samples/sample_faces/sample_person.jpg
 ```
 
 **Expected Terminal Output**:
@@ -231,7 +257,8 @@ Mode: Image File (samples/sample_faces/sample_person.jpg)
 ### 2. Live Webcam Face Scan
 Capture a real-time face scan using your computer's webcam:
 ```bash
-python main.py --camera
+python -m src --camera
+# or: python src/main.py --camera
 ```
 - **Real-time feedback**: A live HUD window displays an alignment guide with a real-time face box.
 - **Stability gate**: Keeps tracking until the face is stable for 20 frames before capturing.
@@ -242,7 +269,7 @@ python main.py --camera
 ### 3. Demonstrate Cryptographic Tamper-Evidence
 Demonstrate how the blockchain instantly catches and rejects altered or spoofed post data:
 ```bash
-python main.py samples/sample_faces/sample_person.jpg --demo-tamper
+python -m src samples/sample_faces/sample_person.jpg --demo-tamper
 ```
 **Tamper Demonstration Output**:
 ```text
@@ -266,13 +293,13 @@ To deploy the smart contract to live Polygon Amoy:
    ```bash
    python scripts/deploy.py
    ```
-   This compiles `contracts/PostVerifier.sol` using `py-solc-x`, deploys the contract, writes `contract_abi.json`, and outputs:
+   This compiles `contracts/PostVerifier.sol` using `py-solc-x`, deploys the contract, writes `contracts/PostVerifier.json`, and outputs:
    ```text
    Contract deployed successfully at: 0x1234567890abcdef...
    Set CONTRACT_ADDRESS=0x1234567890abcdef... in your .env
    ```
 3. Add the printed address to `CONTRACT_ADDRESS` in `.env`.
-4. Now all runs of `pipeline.py` will broadcast live transactions directly to Polygon Amoy!
+4. Now all runs of `main.py` will broadcast live transactions directly to Polygon Amoy!
 
 ---
 
@@ -282,12 +309,14 @@ Each pipeline component can be tested independently:
 
 #### Test SerpAPI Reverse Search:
 ```bash
-python serp_search.py output/face_crop.jpg
+python main.py --serp samples/sample_faces/sample_person.jpg
+# or directly via module:
+python -m src.web_search.serp_search samples/sample_faces/sample_person.jpg
 ```
 
 #### Test Blockchain Hashing & Payload Canonicalization:
 ```bash
-python chain.py
+python -m src.blockchain.chain
 ```
 
 #### Test Face Detection & 512-D Embedding:

@@ -1,5 +1,6 @@
 """
 Blockchain anchoring + re-verification for the discovered post.
+Located in src/blockchain/chain.py.
 
 PRIVACY RULE (deliberate, non-negotiable): only non-biometric metadata
 about the MATCHED POST is hashed and stored on-chain -- never the face
@@ -20,7 +21,20 @@ from web3 import Web3
 
 load_dotenv()
 
-CONTRACT_ABI_PATH = os.path.join(os.path.dirname(__file__), "contract_abi.json")
+# ABI paths: check contracts/PostVerifier.json first
+_DIR = os.path.dirname(__file__)
+CONTRACT_ABI_PATHS = [
+    os.path.abspath(os.path.join(_DIR, "..", "..", "contracts", "PostVerifier.json")),
+    os.path.abspath(os.path.join(_DIR, "..", "..", "contracts", "contract_abi.json")),
+    os.path.abspath(os.path.join(_DIR, "..", "..", "contract_abi.json")),
+]
+
+
+def _get_abi_path() -> str:
+    for path in CONTRACT_ABI_PATHS:
+        if os.path.exists(path):
+            return path
+    return CONTRACT_ABI_PATHS[0]
 
 
 def get_web3() -> Web3:
@@ -35,9 +49,10 @@ def load_contract(w3: Web3):
     address = os.environ.get("CONTRACT_ADDRESS")
     if not address:
         raise RuntimeError("CONTRACT_ADDRESS not set in .env. Deploy via scripts/deploy.py first.")
-    if not os.path.exists(CONTRACT_ABI_PATH):
-        raise RuntimeError(f"{CONTRACT_ABI_PATH} not found -- run scripts/deploy.py first.")
-    with open(CONTRACT_ABI_PATH, "r", encoding="utf-8") as f:
+    abi_path = _get_abi_path()
+    if not os.path.exists(abi_path):
+        raise RuntimeError(f"Contract ABI not found at {abi_path} -- run scripts/deploy.py first.")
+    with open(abi_path, "r", encoding="utf-8") as f:
         abi = json.load(f)
     return w3.eth.contract(address=Web3.to_checksum_address(address), abi=abi)
 
@@ -66,21 +81,25 @@ def hash_payload(payload: Dict) -> bytes:
     return Web3.keccak(text=canonical)
 
 
-def store_record(w3: Web3, contract, private_key: str, data_hash: bytes) -> str:
+def store_record(w3: Web3, contract, private_key: str, data_hash: bytes):
     account = w3.eth.account.from_key(private_key)
     nonce = w3.eth.get_transaction_count(account.address)
+    gas_price = int(w3.eth.gas_price * 1.35)
     tx = contract.functions.storeRecord(data_hash).build_transaction({
         "from": account.address,
         "nonce": nonce,
-        "gas": 200_000,
-        "gasPrice": w3.eth.gas_price,
+        "gas": 250_000,
+        "gasPrice": gas_price,
         "chainId": w3.eth.chain_id,
     })
     signed = account.sign_transaction(tx)
     raw_tx = getattr(signed, "raw_transaction", getattr(signed, "rawTransaction", None))
     tx_hash = w3.eth.send_raw_transaction(raw_tx)
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-    return receipt.transactionHash.hex()
+    tx_hex = receipt.transactionHash.hex()
+    if not tx_hex.startswith("0x"):
+        tx_hex = "0x" + tx_hex
+    return tx_hex, receipt.blockNumber
 
 
 def verify_record(contract, data_hash: bytes) -> Dict:
@@ -96,18 +115,16 @@ def verify_record(contract, data_hash: bytes) -> Dict:
 def anchor_and_verify(match_state: Dict, private_key: Optional[str] = None) -> Dict:
     """
     Full round trip: build payload -> hash -> write to chain -> read
-    back -> confirm the hash matches. This is the function pipeline.py
-    calls.
+    back -> confirm the hash matches. This is the function pipeline calls.
 
-    Supports both live EVM RPC (Polygon Amoy / local RPC) and local verifiable
-    chain fallback if RPC is unconfigured.
+    Interacts with Polygon Amoy EVM smart contract via Web3.py.
     """
     payload = canonical_payload(match_state)
     data_hash = hash_payload(payload)
 
     private_key = private_key or os.environ.get("PRIVATE_KEY") or os.environ.get("BLOCKCHAIN_PRIVATE_KEY")
     contract_addr = os.environ.get("CONTRACT_ADDRESS")
-    rpc_url = os.environ.get("AMOY_RPC_URL")
+    rpc_url = os.environ.get("AMOY_RPC_URL") or os.environ.get("BLOCKCHAIN_RPC_URL")
 
     # If live contract and RPC are configured, interact with EVM directly:
     if contract_addr and rpc_url and private_key:
@@ -116,20 +133,28 @@ def anchor_and_verify(match_state: Dict, private_key: Optional[str] = None) -> D
         w3 = get_web3()
         contract = load_contract(w3)
 
-        tx_hash = store_record(w3, contract, private_key, data_hash)
+        tx_hash, block_number = store_record(w3, contract, private_key, data_hash)
         check = verify_record(contract, data_hash)
 
         return {
             "payload": payload,
             "data_hash": data_hash.hex(),
             "tx_hash": tx_hash,
+            "block_number": block_number,
             "on_chain_exists": check["exists"],
             "on_chain_timestamp": check["timestamp"],
             "on_chain_submitter": check["submitter"],
         }
 
-    # Fallback to in-process verifiable cryptographic chain (simulated mode)
-    # enforcing the exact same privacy rule (metadata hash only)
+    # Strict live check: if non-simulated is requested, fail loudly
+    network = os.environ.get("BLOCKCHAIN_NETWORK", "").lower()
+    if network not in ("simulated", ""):
+        raise RuntimeError(
+            f"BLOCKCHAIN_NETWORK={network} requires CONTRACT_ADDRESS, RPC_URL, and PRIVATE_KEY. "
+            "Please deploy the contract via scripts/deploy.py and set CONTRACT_ADDRESS in .env."
+        )
+
+    # Fallback to in-process verifiable cryptographic chain only when explicitly in simulated mode
     from src.blockchain.verifier import _LOCAL_CHAIN
     import time
     ts = int(time.time())
@@ -147,6 +172,7 @@ def anchor_and_verify(match_state: Dict, private_key: Optional[str] = None) -> D
         "payload": payload,
         "data_hash": data_hash_hex,
         "tx_hash": receipt["tx_hash"],
+        "block_number": receipt["block_number"],
         "on_chain_exists": check is not None,
         "on_chain_timestamp": receipt["timestamp"],
         "on_chain_submitter": receipt["submitter"],
@@ -154,8 +180,6 @@ def anchor_and_verify(match_state: Dict, private_key: Optional[str] = None) -> D
 
 
 if __name__ == "__main__":
-    # Quick standalone test: builds a fake match, hashes it, and checks
-    # the hashing/canonicalization logic WITHOUT touching the chain.
     fake_match = {
         "matched_page_url": "https://instagram.com/p/fake123",
         "matched_image_url": "https://cdn.example.com/a.jpg",

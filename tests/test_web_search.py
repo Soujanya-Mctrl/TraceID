@@ -151,3 +151,65 @@ def test_find_and_verify_match_with_injected_search_fn():
     assert "linkedin.com" in res["page_url"]
     assert res["is_social"] is True
 
+
+def test_classify_candidate_url_reel_vs_canonical():
+    from src.web_search import classify_candidate_url
+
+    # Ephemeral reels and pins
+    reel1 = classify_candidate_url("https://www.instagram.com/reel/C_xyz123/")
+    assert reel1["is_ephemeral_clip"] is True
+    assert reel1["authority_score"] < 0
+
+    pin = classify_candidate_url("https://in.pinterest.com/pin/carryminati--12345/")
+    assert pin["is_ephemeral_clip"] is True
+    assert pin["authority_score"] < 0
+
+    # Canonical profile pages
+    wiki = classify_candidate_url("https://en.wikipedia.org/wiki/CarryMinati")
+    assert wiki["is_canonical_profile"] is True
+    assert wiki["authority_score"] > 40
+
+    imdb = classify_candidate_url("https://www.imdb.com/name/nm1010101/")
+    assert imdb["is_canonical_profile"] is True
+    assert imdb["authority_score"] > 30
+
+
+def test_clean_canonical_social_profile():
+    from src.web_search import clean_canonical_social_profile
+
+    # Instagram reel with author
+    cleaned_ig = clean_canonical_social_profile("https://www.instagram.com/reel/C_xyz/", author_handle="@creator")
+    assert cleaned_ig == "https://www.instagram.com/creator/"
+
+    # Twitter post with author
+    cleaned_tw = clean_canonical_social_profile("https://x.com/tech_leader/status/1762109472304893952", author_handle="@tech_leader")
+    assert cleaned_tw == "https://x.com/tech_leader"
+
+
+def test_reranking_prioritizes_canonical_over_reel():
+    from src.web_search.searcher import _score_candidate
+
+    reel_cand = {
+        "page_url": "https://www.instagram.com/reel/C_12345/",
+        "page_title": "Funny short clip reel",
+        "match_type": "visually_similar",
+        "verified": False,
+        "similarity": None,
+    }
+
+    wiki_cand = {
+        "page_url": "https://en.wikipedia.org/wiki/CarryMinati",
+        "page_title": "CarryMinati - Indian YouTuber and streamer",
+        "match_type": "canonical_entity_profile",
+        "verified": True,
+        "similarity": 0.85,
+    }
+
+    score_reel = _score_candidate(reel_cand, entity_names=["CarryMinati"])
+    score_wiki = _score_candidate(wiki_cand, entity_names=["CarryMinati"])
+
+    assert score_wiki > score_reel
+    assert score_reel < 0  # reel should be penalized
+    assert score_wiki > 100  # canonical + verified should have a very high score
+
+

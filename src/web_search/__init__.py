@@ -10,6 +10,11 @@ from .searcher import (
     detect_platform,
     VERIFY_SIMILARITY_THRESHOLD,
 )
+from .entity_resolver import (
+    resolve_wikipedia_entity,
+    clean_canonical_social_profile,
+    classify_candidate_url,
+)
 from . import serp_search
 
 __all__ = [
@@ -21,6 +26,9 @@ __all__ = [
     "compute_content_fingerprint",
     "detect_platform",
     "VERIFY_SIMILARITY_THRESHOLD",
+    "resolve_wikipedia_entity",
+    "clean_canonical_social_profile",
+    "classify_candidate_url",
     "serp_search",
 ]
 

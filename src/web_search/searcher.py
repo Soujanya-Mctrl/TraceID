@@ -31,6 +31,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from src.face_detection.detector import detect_and_encode
+from src.web_search.entity_resolver import (
+    resolve_wikipedia_entity,
+    clean_canonical_social_profile,
+    classify_candidate_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +50,11 @@ SOCIAL_DOMAINS = [
     "github.com",
 ]
 
-VERIFY_SIMILARITY_THRESHOLD = 0.55   # cosine similarity; Facenet512 embeddings
+VERIFY_SIMILARITY_THRESHOLD = 0.70   # cosine similarity; Facenet512 embeddings.
+# 0.70 matches DeepFace's own published calibration for Facenet512+cosine
+# (their threshold is ~0.30 cosine DISTANCE, i.e. similarity >= ~0.70).
+# A looser threshold (0.55) produced false positives on distorted/degraded
+# images (e.g. decision boundary plots or memes).
 DOWNLOAD_TIMEOUT = 10
 DOWNLOAD_HEADERS = {
     # Some platforms/CDNs block non-browser user agents on hotlinked images.
@@ -347,6 +356,69 @@ def verify_candidate(original_embedding: List[float], candidate: Dict) -> Dict:
     return result
 
 
+def _score_candidate(candidate: Dict, entity_names: List[str]) -> float:
+    """
+    Computes a multi-factor re-ranking score for a candidate.
+    Factors:
+      1. Authority / Domain Score (+50 for canonical Wikipedia/IMDb/bio, -50 for random reel/clip)
+      2. Biometric Face Verification Score (+60..80 if verified >=0.70, +20..35 if moderate, -25 if mismatched)
+      3. Entity Name Match (+35 for exact name match in title/URL, +15 for token match)
+      4. Exact vs Visual match bonus (+15 for exact duplicate photo, +30 for canonical bio profile)
+      5. Ephemeral clip suppression (-50 penalty for /reel/, /shorts/, /pin/, meme boards)
+    """
+    score = 0.0
+    page_url = candidate.get("page_url") or ""
+    image_url = candidate.get("image_url") or ""
+    target_url = page_url or image_url
+    title = candidate.get("page_title") or ""
+
+    cls = classify_candidate_url(target_url, title)
+
+    # 1. Base Authority
+    score += cls.get("authority_score", 0.0)
+
+    # 2. Ephemeral Clip Penalty
+    if cls.get("is_ephemeral_clip"):
+        score -= 50.0
+
+    # 3. Biometric Verification Score
+    sim = candidate.get("similarity")
+    if candidate.get("verified"):
+        sim_val = sim if sim is not None else 0.70
+        score += 60.0 + (sim_val * 20.0)
+    elif sim is not None:
+        if sim >= 0.55:
+            score += sim * 40.0
+        elif sim < 0.45:
+            score -= 25.0
+
+    # 4. Match type bonuses
+    mtype = candidate.get("match_type")
+    if mtype == "canonical_entity_profile":
+        score += 30.0
+    elif mtype == "exact_match":
+        score += 15.0
+    elif mtype == "knowledge_graph":
+        score += 20.0
+
+    # 5. Entity Name Match Bonus
+    title_lower = title.lower()
+    url_lower = target_url.lower()
+    for name in entity_names:
+        clean = name.lower().strip()
+        if not clean:
+            continue
+        if clean in title_lower or clean.replace(" ", "") in url_lower or clean.replace(" ", "_") in url_lower:
+            score += 35.0
+            break
+        tokens = [t for t in clean.split() if len(t) > 2]
+        if tokens and any(t in title_lower or t in url_lower for t in tokens):
+            score += 15.0
+            break
+
+    return score
+
+
 def find_and_verify_match(
     image_path: str,
     original_embedding: List[float],
@@ -356,16 +428,15 @@ def find_and_verify_match(
     search_fn=None,
 ) -> Optional[Dict]:
     """
-    Full Phase 2 pipeline:
+    Full Phase 2 pipeline with Entity Resolution & Re-Ranking:
     1. Search full scan first, face crop fallback.
     2. Harvest candidates (pagesWithMatchingImages + visuallySimilarImages / exact + visual matches).
-    3. Verify each candidate image against the original face embedding via cosine similarity
-       (checking all faces in group photos).
-    4. Rank: verified+social > verified+general > best unverified candidate.
-    5. Generate deterministic cryptographic content fingerprint.
-
-    search_fn: reverse image search function returning {"candidates": [...], "best_guess_labels": [...]}.
-    Defaults to SerpAPI if SEARCH_BACKEND=serp, otherwise Google Vision reverse_image_search.
+    3. Extract identified entity signals (SerpAPI Google Lens related queries, knowledge graphs).
+    4. Resolve celebrity / person canonical identity via Wikipedia REST API.
+    5. Prioritize candidate verification budget towards canonical profiles and away from random reels.
+    6. Verify candidate images against the original face embedding via cosine similarity.
+    7. Multi-factor re-ranking: suppresses ephemeral clips, prioritizes verified faces & canonical profiles.
+    8. Redirects matched post URL to the celebrity's or person's page.
     """
     if search_fn is None:
         backend = os.environ.get("SEARCH_BACKEND", "vision").lower()
@@ -378,59 +449,157 @@ def find_and_verify_match(
     search_images = [image_path] + ([face_crop_path] if face_crop_path and face_crop_path != image_path else [])
 
     all_candidates = []
+    best_guess_labels = []
+    identified_entities = []
+    knowledge_graph = None
+
     for img in search_images:
         try:
             results = search_fn(img, api_key=api_key)
             all_candidates.extend(results.get("candidates", []))
+            best_guess_labels.extend(results.get("best_guess_labels", []))
+            identified_entities.extend(results.get("identified_entities", []))
+            if not knowledge_graph and results.get("knowledge_graph"):
+                knowledge_graph = results.get("knowledge_graph")
         except Exception as e:
             logger.debug("search_fn query failed on %s: %s", img, e)
             continue
         if all_candidates:
             break
 
+    # If primary search failed to produce any candidates, fall back to secondary searcher
+    if not all_candidates and search_fn != reverse_image_search:
+        logger.info("Primary search_fn returned no candidates; falling back to reverse_image_search...")
+        try:
+            fb_res = reverse_image_search(image_path, api_key=api_key)
+            all_candidates.extend(fb_res.get("candidates", []))
+            best_guess_labels.extend(fb_res.get("best_guess_labels", []))
+        except Exception as e:
+            logger.debug("Fallback reverse_image_search failed: %s", e)
+
     if not all_candidates:
         return None
 
-    # Prioritize social + page-precise matches for verification budget
-    all_candidates.sort(key=lambda c: (not c.get("is_social", False), c.get("match_type") != "page_match"))
+    # Entity Analysis: Determine candidate entity names
+    candidate_names = []
+    for name in identified_entities + best_guess_labels:
+        if not name or not isinstance(name, str):
+            continue
+        name_clean = name.strip()
+        if name_clean.lower() in (
+            "face", "portrait", "person", "human", "photography", "headshot",
+            "social media profile", "conference speaker", "tech leader"
+        ):
+            continue
+        if name_clean not in candidate_names:
+            candidate_names.append(name_clean)
+
+    # Attempt to resolve canonical entity from Wikipedia (celebrity / notable person)
+    resolved_entity = None
+    for name in candidate_names:
+        entity_info = resolve_wikipedia_entity(name)
+        if entity_info:
+            resolved_entity = entity_info
+            logger.info("Resolved canonical entity: %s (%s)", entity_info["entity_name"], entity_info.get("description"))
+            wiki_candidate = {
+                "page_url": entity_info["canonical_url"],
+                "image_url": entity_info.get("image_url"),
+                "page_title": f"{entity_info['entity_name']} — {entity_info.get('description', 'Official Biography')}",
+                "snippet": entity_info.get("extract", ""),
+                "is_social": False,
+                "is_canonical_entity": True,
+                "entity_name": entity_info["entity_name"],
+                "entity_description": entity_info.get("description", ""),
+                "match_type": "canonical_entity_profile",
+            }
+            all_candidates.insert(0, wiki_candidate)
+            break
+
+    # Prioritize candidates for face verification budget:
+    # Prioritize canonical profiles, editorial articles, and exact matches over random reels
+    def _pre_rank_key(c):
+        url = c.get("page_url") or c.get("image_url") or ""
+        cls = classify_candidate_url(url, c.get("page_title", ""))
+        has_direct_img = bool(c.get("image_url"))
+        return (
+            not has_direct_img,             # prefer candidates we can actually download/verify
+            cls.get("is_ephemeral_clip"),   # demote ephemeral reels/pins
+            -cls.get("authority_score", 0), # higher authority first
+            c.get("match_type") != "exact_match",
+        )
+
+    all_candidates.sort(key=_pre_rank_key)
     to_verify = all_candidates[:max_candidates_to_verify]
 
     # Verify each candidate containing a direct image URL
     verified_results = [verify_candidate(original_embedding, c) for c in to_verify]
 
-    # Verified matches (cosine similarity >= threshold)
-    verified = [r for r in verified_results if r.get("verified")]
-    if verified:
-        verified.sort(key=lambda r: (not r.get("is_social", False), -(r.get("similarity") or 0.0)))
-        top_match = verified[0]
-        page_url = top_match.get("page_url") or top_match.get("image_url")
-        meta = extract_post_metadata(page_url, fallback_title=top_match.get("page_title", ""))
-        return {
-            **top_match,
-            **meta,
-            "url": page_url,
-            "verified": True,
-            "similarity": top_match["similarity"],
-            "note": f"VERIFIED: Face match confirmed via cosine similarity ({top_match['similarity']:.3f})",
-        }
+    # Score and Re-Rank all processed candidates
+    entity_names = candidate_names
+    if resolved_entity:
+        entity_names = [resolved_entity["entity_name"]] + entity_names
 
-    # Unverified candidate fallback (clearly flagged)
-    unverified_with_url = [r for r in verified_results if r.get("page_url") or r.get("image_url")]
-    if unverified_with_url:
-        top_unverified = unverified_with_url[0]
-        page_url = top_unverified.get("page_url") or top_unverified.get("image_url")
-        meta = extract_post_metadata(page_url, fallback_title=top_unverified.get("page_title", ""))
-        note = top_unverified.get("verify_error") or "Could not confirm face match; showing best candidate"
-        return {
-            **top_unverified,
-            **meta,
-            "url": page_url,
-            "verified": False,
-            "similarity": top_unverified.get("similarity"),
-            "note": f"UNVERIFIED: {note}",
-        }
+    scored_candidates = []
+    for cand in verified_results:
+        s = _score_candidate(cand, entity_names)
+        scored_candidates.append({**cand, "_rerank_score": s})
 
-    return None
+    scored_candidates.sort(key=lambda x: x["_rerank_score"], reverse=True)
+
+    if not scored_candidates:
+        return None
+
+    top_match = scored_candidates[0]
+    matched_url = top_match.get("page_url") or top_match.get("image_url")
+
+    # If the top match is an ephemeral clip/reel but we resolved a canonical profile for the person,
+    # redirect to the celebrity's / person's canonical page
+    canonical_redirect_url = None
+    if resolved_entity:
+        canonical_redirect_url = resolved_entity["canonical_url"]
+    else:
+        author_clean = top_match.get("author")
+        canonical_redirect_url = clean_canonical_social_profile(matched_url, author_clean)
+
+    cls_top = classify_candidate_url(matched_url, top_match.get("page_title", ""))
+    if (cls_top.get("is_ephemeral_clip") or not matched_url) and canonical_redirect_url:
+        final_page_url = canonical_redirect_url
+    else:
+        final_page_url = matched_url
+
+    meta = extract_post_metadata(final_page_url, fallback_title=top_match.get("page_title", ""))
+
+    if resolved_entity:
+        meta["author"] = resolved_entity["entity_name"]
+        if resolved_entity.get("description"):
+            meta["content_text"] = f"{resolved_entity['entity_name']}: {resolved_entity['description']}"
+        meta["platform"] = "Official Identity / Wikipedia"
+
+    is_verified = bool(top_match.get("verified"))
+    sim_score = top_match.get("similarity")
+
+    if is_verified:
+        note = f"VERIFIED: Face match confirmed via cosine similarity ({sim_score:.3f})"
+    elif sim_score is not None and sim_score >= 0.55 and resolved_entity:
+        note = f"IDENTIFIED: {resolved_entity['entity_name']} (cosine similarity {sim_score:.3f} on canonical portrait)"
+    elif resolved_entity:
+        note = f"IDENTIFIED: {resolved_entity['entity_name']} ({resolved_entity.get('description', 'Public Figure')})"
+    else:
+        note = top_match.get("verify_error") or "Could not confirm face match; showing best ranked candidate"
+
+    return {
+        **top_match,
+        **meta,
+        "url": final_page_url,
+        "page_url": final_page_url,
+        "verified": is_verified,
+        "similarity": sim_score,
+        "identified_entity": resolved_entity.get("entity_name") if resolved_entity else (candidate_names[0] if candidate_names else None),
+        "entity_description": resolved_entity.get("description") if resolved_entity else None,
+        "canonical_profile_url": resolved_entity.get("canonical_url") if resolved_entity else canonical_redirect_url,
+        "rerank_score": round(top_match["_rerank_score"], 2),
+        "note": note,
+    }
 
 
 def search_web_for_face(crop_image_path: str, query_hints: Optional[str] = None) -> List[Dict]:

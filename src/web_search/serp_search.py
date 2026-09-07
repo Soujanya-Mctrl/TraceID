@@ -184,35 +184,88 @@ def reverse_image_search(image_path: str, api_key: Optional[str] = None) -> Dict
         raise RuntimeError(f"SerpApi search error: {data.get('error', data)}")
 
     candidates = []
+    best_guess = []
+    identified_entities = []
 
-    # "exact_matches" -- near-duplicate images, highest confidence this
-    # is literally the same posted photo.
+    # 1. Knowledge Graph (highest direct entity signal)
+    kg = data.get("knowledge_graph")
+    if kg and isinstance(kg, dict):
+        kg_title = kg.get("title")
+        if kg_title:
+            best_guess.append(kg_title)
+            identified_entities.append(kg_title)
+            # Add Knowledge Graph link as high-priority candidate if available
+            kg_link = kg.get("link")
+            if kg_link:
+                candidates.append({
+                    "page_url": kg_link,
+                    "image_url": kg.get("image") or kg.get("thumbnail"),
+                    "page_title": f"{kg_title} ({kg.get('type', 'Official Profile')})",
+                    "is_social": _is_social_url(kg_link),
+                    "match_type": "knowledge_graph",
+                })
+
+    # 2. Related Content (Google Lens entity identification queries, e.g. "Ajey Nagar")
+    for rc in data.get("related_content", []):
+        query = rc.get("query")
+        if query:
+            if query not in identified_entities:
+                identified_entities.append(query)
+            if query not in best_guess:
+                best_guess.append(query)
+        link = rc.get("link")
+        if link:
+            candidates.append({
+                "page_url": link,
+                "image_url": rc.get("thumbnail") or rc.get("image"),
+                "page_title": query or "Related Entity Search",
+                "is_social": _is_social_url(link),
+                "match_type": "related_entity",
+            })
+
+    # 3. Exact matches -- near-duplicate images
     for m in data.get("exact_matches", []):
         link = m.get("link", "")
-        candidates.append({
-            "page_url": link,
-            "image_url": m.get("image") or m.get("thumbnail"),
-            "page_title": m.get("title", ""),
-            "is_social": _is_social_url(link),
-            "match_type": "exact_match",
-        })
+        if link:
+            candidates.append({
+                "page_url": link,
+                "image_url": m.get("image") or m.get("thumbnail"),
+                "page_title": m.get("title", ""),
+                "is_social": _is_social_url(link),
+                "match_type": "exact_match",
+            })
 
-    # "visual_matches" -- broader net, same as Vision's visuallySimilarImages.
+    # 4. Organic results
+    for o in data.get("organic_results", []):
+        link = o.get("link", "")
+        if link:
+            candidates.append({
+                "page_url": link,
+                "image_url": o.get("thumbnail"),
+                "page_title": o.get("title", ""),
+                "snippet": o.get("snippet", ""),
+                "is_social": _is_social_url(link),
+                "match_type": "organic_result",
+            })
+
+    # 5. Visual matches -- broader visual-similarity net
     for m in data.get("visual_matches", []):
         link = m.get("link", "")
-        candidates.append({
-            "page_url": link,
-            "image_url": m.get("image") or m.get("thumbnail"),
-            "page_title": m.get("title", ""),
-            "is_social": _is_social_url(link),
-            "match_type": "visually_similar",
-        })
+        if link:
+            candidates.append({
+                "page_url": link,
+                "image_url": m.get("image") or m.get("thumbnail"),
+                "page_title": m.get("title", ""),
+                "is_social": _is_social_url(link),
+                "match_type": "visually_similar",
+            })
 
-    best_guess = []
-    if "knowledge_graph" in data and data["knowledge_graph"].get("title"):
-        best_guess.append(data["knowledge_graph"]["title"])
-
-    return {"candidates": candidates, "best_guess_labels": best_guess}
+    return {
+        "candidates": candidates,
+        "best_guess_labels": best_guess,
+        "identified_entities": identified_entities,
+        "knowledge_graph": kg,
+    }
 
 
 if __name__ == "__main__":

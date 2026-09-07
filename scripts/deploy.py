@@ -30,7 +30,7 @@ load_dotenv()
 
 SOLC_VERSION = "0.8.19"
 CONTRACT_PATH = os.path.join(os.path.dirname(__file__), "..", "contracts", "PostVerifier.sol")
-ABI_OUTPUT_PATH = os.path.join(os.path.dirname(__file__), "..", "contract_abi.json")
+ABI_OUTPUT_PATH = os.path.join(os.path.dirname(__file__), "..", "contracts", "PostVerifier.json")
 
 
 def compile_contract():
@@ -89,12 +89,12 @@ def deploy():
 
     nonce = w3.eth.get_transaction_count(account.address)
     chain_id = w3.eth.chain_id
-    gas_price = w3.eth.gas_price
+    gas_price = int(w3.eth.gas_price * 1.35)
 
     tx = Contract.constructor().build_transaction({
         "from": account.address,
         "nonce": nonce,
-        "gas": 500_000,
+        "gas": 600_000,
         "gasPrice": gas_price,
         "chainId": chain_id,
     })
