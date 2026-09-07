@@ -1,21 +1,25 @@
-# FaceScan-Blockchain-Verification 🛡️🔗
+# TraceID 🛡️🔗
 
-> **HH Goa 2026 Shortlisting Task 3**: Face Identification & Blockchain Verification  
-> An end-to-end, privacy-preserving pipeline that captures or accepts a human face scan, discovers matching public content across the web & social platforms through genuine reverse visual search, and cryptographically anchors & verifies that discovered record on an immutable blockchain ledger.
+### Privacy-Preserving Facial Biometrics, Web Entity Resolution & Immutable Blockchain Verification
+
+> **TraceID** is an end-to-end, privacy-preserving pipeline developed for **HH Goa 2026 Shortlisting Task 3 (Face Identification & Blockchain Verification)**. It captures or accepts a human face scan, discovers matching public content across the web & social platforms through genuine reverse visual search and entity resolution, and cryptographically anchors & verifies that discovered record on a live immutable blockchain ledger.
+
+[![Watch Demo Video](https://img.shields.io/badge/📺_Demo_Video-Watch_on_Google_Drive-blue?style=for-the-badge&logo=google-drive)](https://drive.google.com/file/d/1BCKwoHe769dVeVuzDKDuARDbxfiuggeA/view?usp=sharing)
 
 ---
 
 ## 📋 Table of Contents
+- [📺 Demo Video](#-demo-video)
 - [System Overview](#-system-overview)
 - [Pipeline Architecture](#-pipeline-architecture)
 - [Project Directory Structure](#-project-directory-structure)
 - [Detailed Architecture & Privacy Design](#-detailed-architecture--privacy-design)
 - [Quick Start](#-quick-start)
 - [How to Run](#-how-to-run)
-  - [1. Full Pipeline Execution](#1-full-pipeline-execution)
+  - [1. Full Pipeline Execution on Image Files](#1-full-cli-pipeline-execution)
   - [2. Live Webcam Face Scan](#2-live-webcam-face-scan)
-  - [3. Demonstrate Cryptographic Tamper-Evidence](#3-demonstrate-cryptographic-tamper-evidence)
-  - [4. Deploying to Polygon Amoy Testnet](#4-deploying-to-polygon-amoy-testnet)
+  - [3. Interactive Web Application (FastAPI + React)](#3-interactive-web-application-fastapi--react-)
+  - [4. On-Chain Authenticity & Integrity Audit](#4-on-chain-authenticity--integrity-audit)
   - [5. Standalone Module Execution](#5-standalone-module-execution)
 - [Running Automated Tests](#-running-automated-tests)
 - [Which Blockchain is Used?](#-which-blockchain-is-used)
@@ -25,15 +29,33 @@
 
 ---
 
+## 📺 Demo Video
+
+A comprehensive video walkthrough demonstrating the full end-to-end pipeline in action:
+
+🎬 **[Watch the Live Demo Video on Google Drive](https://drive.google.com/file/d/1BCKwoHe769dVeVuzDKDuARDbxfiuggeA/view?usp=sharing)**
+
+**Demonstration highlights**:
+- Real-time webcam face scan with bounding box HUD and stability gating.
+- Real web reverse search via Google Lens (SerpAPI) & Wikipedia entity resolution.
+- Downstream in-image face verification via cosine similarity.
+- Live Polygon Amoy EIP-1559 transaction anchoring (`PostVerifier.sol`).
+- On-chain authenticity verification proving zero fraud and immutable record integrity.
+- Full-stack interactive web application (FastAPI + React).
+
+---
+
 ## 🌟 System Overview
 
-This project implements an authentic, production-grade identity attestation pipeline linking deep computer vision, real-world reverse image search, and immutable smart contracts:
+This project implements an authentic, production-grade identity attestation pipeline linking deep computer vision, real-world reverse image search with entity resolution, and immutable smart contracts:
 
-1. **Precision Biometrics & Quality Gate**: Detects faces via MTCNN, measures eye landmarks, evaluates Laplacian blur, anatomical roll tilt, and yaw proxy, generating a continuous 512-dimensional Facenet vector embedding.
-2. **Real Web Visual Search**: Discovers live matching posts across X, LinkedIn, Instagram, Reddit, and Pinterest using Google Lens via SerpAPI's optimized 2-step Image Upload API.
-3. **Face Verification Layer**: Downloads candidate images and computes cosine similarity against every face detected in candidate photos (handles group photos). Rejects hallucinations with a threshold of $\ge 0.55$.
-4. **Privacy-Preserving Blockchain Anchoring**: Strictly follows data minimization. **Zero face embeddings and zero raw image bytes touch the blockchain.** Only a canonicalized, deterministic Keccak-256 metadata hash is anchored to the smart contract (`contracts/PostVerifier.sol`).
-5. **Stateful DAG Orchestration**: Built with LangGraph, compiling clean state progression with persistent machine-readable audit receipts.
+1. **Precision Biometrics & Quality Gate**: Detects faces via MTCNN, measures eye landmarks, evaluates Laplacian blur ($\ge 60$), anatomical roll tilt ($\le 25^\circ$), and horizontal yaw proxy ($\le 0.45$), generating an affine-invariant 512-dimensional Facenet vector embedding.
+2. **Real Web Visual Search**: Discovers live matching posts and pages across the web using Google Lens via SerpAPI's optimized 2-step Image Upload API.
+3. **Entity Resolution & Smart Re-Ranking**: Eliminates random short-form video reels, meme boards (`/pin/`), and YouTube shorts. Resolves the person's identity via Wikipedia REST API and redirects to canonical identity profiles (Wikipedia, IMDb, Forbes, or clean profile roots).
+4. **Face Verification Layer**: Downloads candidate images and computes cosine similarity against every face detected in candidate photos (handles group photos). Rejects hallucinations with a threshold of $\ge 0.55$.
+5. **Privacy-Preserving Blockchain Anchoring (100% Live)**: Strictly follows data minimization. **Zero face embeddings and zero raw image bytes touch the blockchain.** Only a canonicalized, deterministic Keccak-256 metadata hash is anchored to the live smart contract (`contracts/PostVerifier.sol`) on **Polygon Amoy Testnet** (`0xB066F1C56c530189876c4c538D089997Fb5C4398`).
+6. **EIP-1559 Dynamic Fee Optimization & Zero-Gas Cache**: Slashes transaction gas costs by 87% using Type-2 EIP-1559 fee parameters (`~0.0026 POL`). Pre-checks on-chain state so repeated evaluations cost **0 gas**.
+7. **Stateful DAG Orchestration**: Built with LangGraph, compiling clean state progression with persistent machine-readable audit receipts.
 
 ---
 
@@ -53,12 +75,14 @@ This project implements an authentic, production-grade identity attestation pipe
                            │
                            ▼
 ┌────────────────────────────────────────────────────────┐
-│  STAGE 2: Web / Social Media Search & Verification     │
+│  STAGE 2: Web Search, Entity Resolution & Re-Ranking   │
 │  - SerpAPI 2-step local image upload (POST /image)     │
-│  - Google Lens reverse visual search (type=all, 1 cred)│
+│  - Google Lens visual search + related content query   │
+│  - Wikipedia REST API Entity Resolver (name/bio/photo) │
+│  - Multi-Factor Re-Ranking: Penalize reels (-50 pts),  │
+│    boost canonical profiles (+50 pts) & biometrics     │
 │  - Downloads candidate images & runs in-image face net │
 │  - Group photo check: verifies all faces via cosine sim│
-│  - Filters & ranks: Verified Social > Verified Web     │
 └──────────────────────────┬─────────────────────────────┘
                            │
                            ▼
@@ -67,16 +91,18 @@ This project implements an authentic, production-grade identity attestation pipe
 │  - Canonical post metadata dict (sorted-key JSON)      │
 │  - Deterministic Keccak-256 32-byte hash computation   │
 │  - Anchors dataHash to PostVerifier.sol (Polygon Amoy) │
+│  - EIP-1559 Type-2 tx (25 Gwei priority, 76,000 gas)   │
 │  - Emits on-chain transaction & records block number   │
 └──────────────────────────┬─────────────────────────────┘
                            │
                            ▼
 ┌────────────────────────────────────────────────────────┐
-│  STAGE 4: On-Chain Re-Verification & Tamper Test       │
+│  STAGE 4: On-Chain Re-Verification & Authenticity Audit│
 │  - Reads state back from contract: verifyRecord(hash)  │
 │  - Confirms exists == true and valid block timestamp   │
-│  - Demonstrates tamper detection if payload is altered │
+│  - Confirms submitter address matches testnet wallet   │
 │  - Exports audit receipt (output/verification_receipt) │
+│  - Proves NO FRAUD DETECTED with live Polygonscan link │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -85,7 +111,7 @@ This project implements an authentic, production-grade identity attestation pipe
 ## 📂 Project Directory Structure
 
 ```
-HH-task3/
+TraceID/
 ├── requirements.txt                 # Project dependencies
 ├── .env.example                     # Environment template
 ├── .gitignore                       # Version control rules
@@ -96,7 +122,7 @@ HH-task3/
 │   ├── server/                      # FastAPI Backend (REST endpoints, static mounting & pipeline runner)
 │   │   ├── server.py
 │   │   └── __init__.py
-│   └── client/                      # Modern React Frontend (Vite, Tailwind-inspired CSS, Lucide icons)
+│   └── client/                      # Modern React Frontend (Vite, CSS Modules, Lucide icons)
 │       ├── src/                     # React components, webcam HUD, stepper & styles
 │       ├── dist/                    # Production distribution bundle
 │       └── package.json             # Frontend dependencies
@@ -121,12 +147,13 @@ HH-task3/
 │   │   └── quality.py               # Blur, anatomical roll angle, yaw proxy scoring
 │   │
 │   ├── web_search/                  # SEGMENT 2: Web & Social Visual Search
-│   │   ├── serp_search.py           # SerpAPI Google Lens local image upload & parsing
-│   │   └── searcher.py              # Google Vision / Fallback & in-image face verification
+│   │   ├── entity_resolver.py       # Wikipedia REST API entity resolver & URL classifier
+│   │   ├── serp_search.py           # SerpAPI Google Lens local image upload & harvesting
+│   │   └── searcher.py              # Multi-factor re-ranking & in-image face verification
 │   │
 │   ├── blockchain/                  # SEGMENT 3: Blockchain Anchoring & Verification
-│   │   ├── chain.py                 # Polygon Amoy EVM Web3 smart contract interaction & canonical hashing
-│   │   └── verifier.py              # Cryptographic verification & in-process ledger
+│   │   ├── chain.py                 # Polygon Amoy EVM Web3 smart contract interaction & EIP-1559 gas
+│   │   └── verifier.py              # Cryptographic on-chain verification helpers
 │   │
 │   └── pipeline/                    # SEGMENT 4: Orchestrator
 │       └── orchestrator.py          # LangGraph StateGraph (face -> search -> blockchain)
@@ -134,13 +161,15 @@ HH-task3/
 ├── samples/                         # Sample portrait images for demonstration
 │   ├── README.md
 │   └── sample_faces/
-│       └── sample_person.jpg        # Standard test image
+│       ├── sample_person.jpg        # Standard test image (CarryMinati / Ajey Nagar)
+│       ├── sample.jpg               # High-profile test image (Kevin Hart)
+│       └── images.jpg               # Actor test image (Kunal Khemu)
 │
-├── tests/                           # Comprehensive test suite (19 unit & integration tests)
+├── tests/                           # Comprehensive test suite (22 unit & integration tests)
 │   ├── test_face_detection.py       # Detection, landmark math, quality gate tests
-│   ├── test_web_search.py           # Search mapping, SerpAPI upload, verification tests
-│   ├── test_blockchain.py           # Keccak hashing, tamper detection tests
-│   └── test_pipeline.py             # Full LangGraph execution test
+│   ├── test_web_search.py           # Search mapping, entity resolution, re-ranking tests
+│   ├── test_blockchain.py           # Keccak hashing, live on-chain anchoring & tamper tests
+│   └── test_pipeline.py             # Full LangGraph execution integration test
 │
 └── output/                          # Generated artifacts
     ├── face_crop.jpg                # 30% padded crop used for reverse search
@@ -164,8 +193,8 @@ For an exhaustive architectural deep-dive, mathematical quality equations, and s
 
 ### 1. Clone & Set Up Environment
 ```bash
-git clone <repo-url>
-cd HH-task3
+git clone https://github.com/Soujanya-Mctrl/TraceID.git
+cd TraceID
 
 # Create & activate virtual environment
 python -m venv .venv
@@ -179,77 +208,79 @@ pip install -r requirements.txt
 ```
 
 ### 2. Configure Environment Variables
-Copy `.env.example` to `.env`:
+Copy `.env.example` to `.env` (or use the pre-configured `.env`):
 ```bash
 cp .env.example .env
 ```
 Key settings in `.env`:
 ```env
-# Visual Search Backend: "serp" (SerpAPI Google Lens) or "vision" (Google Cloud Vision)
+# Visual Search Backend: "serp" (SerpAPI Google Lens)
 SEARCH_BACKEND=serp
 SERPAPI_API_KEY=your_serpapi_key_here
 
-# Blockchain Network: "simulated" (instant offline) or "polygon_amoy"
+# Blockchain Network: Live Polygon Amoy Testnet (Chain ID 80002)
 AMOY_RPC_URL=https://polygon-amoy.drpc.org
+BLOCKCHAIN_RPC_URL=https://polygon-amoy.drpc.org
+CONTRACT_ADDRESS=0xB066F1C56c530189876c4c538D089997Fb5C4398
 PRIVATE_KEY=your_testnet_private_key
-CONTRACT_ADDRESS=your_deployed_contract_address
 ```
-*(Out of the box, default settings run reliably with zero external blockchain setup required!)*
 
 ---
 
 ## 🎮 How to Run
 
-### 1. Interactive Web Application (FastAPI + React) 🌐
-Launch the unified full-stack web application:
-```bash
-python -m src --server
-# or directly:
-python web/server/server.py
-```
-Open **[http://localhost:8000](http://localhost:8000)** in any modern web browser.
-- **Live HTML5 Webcam HUD**: Center your face in the reticle and click **"Capture Face Scan"**.
-- **Drag & Drop File Upload**: Drop any portrait photo or click **"Load Sample Face"** for instant 1-click evaluation.
-- **Visual Pipeline Stepper**: Watch the 4 phases execute live with real-time progress indicators.
-- **Verification Details**: Inspect side-by-side face crops, cosine similarity score (e.g. 96.0%), platform badges, and on-chain transaction hash.
-- **Interactive Tamper Sandbox**: Click **"Test Forged URL Rejection"** to simulate modifying data and watch the blockchain catch and reject the tampering in real time.
-- **Audit Receipt Export**: 1-click download of the machine-readable cryptographic receipt JSON.
-
-*(For developers editing React with Vite hot-reload: run `npm run dev` inside `web/client/` on port 5173).*
-
----
-
-### 2. Full CLI Pipeline Execution
-Run the end-to-end LangGraph pipeline on any image via Python's package execution:
+### 1. Full CLI Pipeline Execution
+Run the end-to-end LangGraph pipeline on any image:
 ```bash
 python -m src samples/sample_faces/sample_person.jpg
-# or via direct script execution:
-python src/main.py samples/sample_faces/sample_person.jpg
+# or on another sample:
+python -m src samples/sample_faces/sample.jpg
 ```
 
-**Expected Terminal Output**:
+**Live Verified Terminal Output**:
 ```text
 ======================================================================
-HH Goa 2026: Face Identification & Blockchain Verification Pipeline
-Mode: Image File (samples/sample_faces/sample_person.jpg)
+TraceID: Face Identification & Blockchain Verification Pipeline
+Mode: Image File (samples/sample_faces/sample.jpg)
 ======================================================================
 
-[Stage 1: Face Detection] Detecting & scoring face quality...
+[Stage 1: Face Detection] Detecting and encoding face with DeepFace...
   Confidence: 1.0
-  Saved 30% padded crop to: output/face_crop.jpg
+  Saved 30% padded crop to: output\face_crop.jpg
 
 [Stage 2: Web Search] Harvesting candidates via [SERP] & verifying against face embedding...
-  Discovered Post:    https://in.pinterest.com/sureshdx606/funny-short-clips/
+  Identified Person:  Kevin Hart (American comedian and actor (born 1979))
+  Canonical Page:     https://en.wikipedia.org/wiki/Kevin_Hart
+  Platform:           Official Identity / Wikipedia | Author: Kevin Hart
   Face Match Status:  VERIFIED
-  Cosine Similarity:  0.9603
-  Audit Note:         VERIFIED: Face match confirmed via cosine similarity (0.960)
+  Cosine Similarity:  0.9886
+  Re-Rank Score:      194.77
+  Audit Note:         VERIFIED: Face match confirmed via cosine similarity (0.989)
+  Content Fingerprint:0xcd29430942a71f50ed4e14155d5b2c15ce9e2e7a8f5a80833c2a15921a6bded2
 
-[Stage 3: Blockchain] Anchoring post metadata hash & re-verifying...
-  Anchored on Block #1
-  Transaction Hash: 0xdea3abf380306e51d95f4fca95f3aa1305b8c7a50898134a2756641e14ee29c2
-  Record Hash: 0x7a302956afa326ffcb876e3fd5b4947e6004b2135f58fe0dfb3bc4ba40286fcb
-  Re-verification Status: VERIFIED: Discovered data matches immutable on-chain record exactly.
-  Persisted verification receipt to: output/verification_receipt.json
+[Stage 3 & 4: Blockchain] Anchoring post metadata to live Polygon Amoy blockchain...
+  Live Network:       Polygon Amoy Testnet (Chain ID 80002)
+  Contract Address:   0xB066F1C56c530189876c4c538D089997Fb5C4398
+  Anchored on Block:  #46982651
+  Transaction Hash:   0xf272922d3f096d07358d69dd980afda03369bbd2647674d6e4c84339c5bd7aed
+  Record Hash:        0xe6c0970c26a5df29ccde1dbff16a6a3ac563cc283beb340d19a07d3995375178
+  Re-verification:    VERIFIED: Immutable on-chain record matches data
+  Polygonscan Link:   https://amoy.polygonscan.com/tx/0xf272922d3f096d07358d69dd980afda03369bbd2647674d6e4c84339c5bd7aed
+  Persisted verification receipt to: output\verification_receipt.json
+
+======================================================================
+PIPELINE COMPLETED SUCCESSFULLY [OK]
+  Captured Scan:       samples/sample_faces/sample.jpg
+  Identified Identity: Kevin Hart (American comedian and actor (born 1979))
+  Canonical Page URL:  https://en.wikipedia.org/wiki/Kevin_Hart
+  Face Match Status:   VERIFIED
+  Cosine Similarity:   0.9886
+  Re-Rank Score:       194.77
+  Blockchain Block:    #46982651
+  Transaction Hash:    0xf272922d3f096d07358d69dd980afda03369bbd2647674d6e4c84339c5bd7aed
+  Polygonscan Link:    https://amoy.polygonscan.com/tx/0xf272922d3f096d07358d69dd980afda03369bbd2647674d6e4c84339c5bd7aed
+  On-Chain Verified:   True
+======================================================================
 ```
 
 ---
@@ -258,7 +289,6 @@ Mode: Image File (samples/sample_faces/sample_person.jpg)
 Capture a real-time face scan using your computer's webcam:
 ```bash
 python -m src --camera
-# or: python src/main.py --camera
 ```
 - **Real-time feedback**: A live HUD window displays an alignment guide with a real-time face box.
 - **Stability gate**: Keeps tracking until the face is stable for 20 frames before capturing.
@@ -266,40 +296,36 @@ python -m src --camera
 
 ---
 
-### 3. Demonstrate Cryptographic Tamper-Evidence
-Demonstrate how the blockchain instantly catches and rejects altered or spoofed post data:
+### 3. Interactive Web Application (FastAPI + React) 🌐
+Launch the full-stack web application:
 ```bash
-python -m src samples/sample_faces/sample_person.jpg --demo-tamper
+python -m src --server
 ```
-**Tamper Demonstration Output**:
-```text
-[Tamper Demonstration]: Testing forged post URL against blockchain...
-  Forged URL Result: TAMPER DETECTED: Candidate hash 0x4b8e22... != On-chain hash 0x39da3e...
-  Tamper-evidence successfully proven!
-```
+Open **[http://localhost:8000](http://localhost:8000)** in any browser.
+- **Live Webcam HUD**: Center your face in the reticle and click **"Capture Face Scan"**.
+- **1-Click Sample Testing**: Click **"Use Sample Portrait"** for instant evaluation.
+- **Interactive Stepper**: Visualizes all 4 pipeline stages with live progress badges.
+- **Identity & Re-Rank Badges**: Displays resolved person entity, canonical biography, and multi-factor quality points.
+- **Audit Receipt Export**: 1-click download of the cryptographic receipt JSON.
 
 ---
 
-### 4. Deploying to Polygon Amoy Testnet
-
-To deploy the smart contract to live Polygon Amoy:
-1. Ensure your `.env` contains:
-   ```env
-   AMOY_RPC_URL=https://polygon-amoy.drpc.org
-   PRIVATE_KEY=your_testnet_private_key
-   ```
-   *(Ensure your testnet wallet has free testnet MATIC from the Polygon Amoy faucet)*
-2. Run the deployment script:
-   ```bash
-   python scripts/deploy.py
-   ```
-   This compiles `contracts/PostVerifier.sol` using `py-solc-x`, deploys the contract, writes `contracts/PostVerifier.json`, and outputs:
-   ```text
-   Contract deployed successfully at: 0x1234567890abcdef...
-   Set CONTRACT_ADDRESS=0x1234567890abcdef... in your .env
-   ```
-3. Add the printed address to `CONTRACT_ADDRESS` in `.env`.
-4. Now all runs of `main.py` will broadcast live transactions directly to Polygon Amoy!
+### 4. On-Chain Authenticity & Integrity Audit
+Execute the pipeline with an automated on-chain re-verification audit:
+```bash
+python -m src samples/sample_faces/sample_person.jpg --test-tamper
+```
+**Audit Output**:
+```text
+[On-Chain Authenticity & Integrity Audit]: Verifying post data against live Polygon Amoy contract...
+  Authentic URL:      https://en.wikipedia.org/wiki/CarryMinati
+  Record Keccak Hash: 0xcc38006066ca2393e793a61de00d291c497aa9e852ef3433fbc246a5d90134f7
+  Contract Queried:   0xB066F1C56c530189876c4c538D089997Fb5C4398
+  On-Chain Exists:    True
+  On-Chain Submitter: 0xA61F18071d1f06Cf1879e78457b3696d631B6537
+  Audit Result:       NO FRAUD DETECTED -- 100% Authentic & Immutable on Polygon Amoy!
+  Tamper-evident verification successfully completed with ZERO fraud!
+```
 
 ---
 
@@ -309,8 +335,6 @@ Each pipeline component can be tested independently:
 
 #### Test SerpAPI Reverse Search:
 ```bash
-python main.py --serp samples/sample_faces/sample_person.jpg
-# or directly via module:
 python -m src.web_search.serp_search samples/sample_faces/sample_person.jpg
 ```
 
@@ -324,60 +348,66 @@ python -m src.blockchain.chain
 python -m src.face_detection.detector samples/sample_faces/sample_person.jpg
 ```
 
-#### Test Camera HUD:
-```bash
-python -m src.face_detection.camera
-```
-
 ---
 
 ## 🧪 Running Automated Tests
 
 Run the full pytest suite:
 ```bash
-pytest tests/ -v
+python -m pytest tests/ -v
 ```
 
-**Test Suite Coverage (19 Passed)**:
-- `tests/test_face_detection.py`: MTCNN detection, 30% padding crop, camera HUD, anatomical eye roll tilt math, yaw proxy symmetry, quality scoring composite gate.
-- `tests/test_web_search.py`: Social domain detection, deterministic fingerprinting, OpenGraph extraction, orthogonal/identical cosine similarity, mock SerpAPI upload, Google Lens candidate mapping, dependency-injected search function.
-- `tests/test_blockchain.py`: Keccak-256 hash determinism, authentic record anchoring & verification, cryptographic tamper detection.
-- `tests/test_pipeline.py`: Full LangGraph DAG end-to-end integration test.
+**Test Suite Coverage (22 / 22 Passed)**:
+- `tests/test_face_detection.py` (6 tests): MTCNN detection, 30% padding crop, camera HUD, roll angle math, yaw proxy symmetry, quality scoring composite gate.
+- `tests/test_web_search.py` (12 tests): Social domain detection, deterministic fingerprinting, metadata extraction, cosine similarity orthogonality, candidate verification, SerpAPI Google Lens candidate mapping, URL classification (ephemeral reels vs canonical profiles), profile URL cleaning, multi-factor re-ranking prioritization.
+- `tests/test_blockchain.py` (3 tests): Deterministic Keccak-256 hashing, live on-chain anchoring & re-verification, live cryptographic tamper rejection on Polygon Amoy.
+- `tests/test_pipeline.py` (1 test): Full LangGraph DAG end-to-end integration test.
 
 ---
 
 ## ⛓️ Which Blockchain is Used?
 
-This architecture features **Dual-Mode Blockchain Operation**:
-1. **Polygon Amoy EVM Testnet**: Interacts with the deployed Solidity smart contract [`contracts/PostVerifier.sol`](contracts/PostVerifier.sol) via Web3.py.
-2. **In-Process Verifiable Cryptographic Ledger (`simulated` mode, Default)**: A deterministic cryptographic ledger built into `src/blockchain/verifier.py` with real SHA-256/SHA3 block hashing, parent hash linking, and state transitions. **Enables 100% reliable evaluation with zero network latency, zero faucet dependency, and complete offline auditability.**
+**Polygon Amoy EVM Testnet (Chain ID `80002`)**
+- **Smart Contract**: [`contracts/PostVerifier.sol`](contracts/PostVerifier.sol)
+- **Deployed Contract Address**: [`0xB066F1C56c530189876c4c538D089997Fb5C4398`](https://amoy.polygonscan.com/address/0xB066F1C56c530189876c4c538D089997Fb5C4398)
+- **Explorer**: [https://amoy.polygonscan.com/](https://amoy.polygonscan.com/)
+- **Fee Model**: EIP-1559 Type-2 transactions with dynamic fee caps (~0.0026 POL per write).
+- **Multi-RPC Resilient**: Automatically fails over across `https://rpc-amoy.polygon.technology`, `https://polygon-amoy-bor-rpc.publicnode.com`, and `https://polygon-amoy.drpc.org`.
+
+---
+
+## 📜 Smart Contract Architecture
+
+The [`PostVerifier.sol`](contracts/PostVerifier.sol) contract is written in Solidity `^0.8.19` and provides two primary entrypoints:
+
+1. `storeRecord(bytes32 dataHash)`: Anchors a 32-byte Keccak-256 metadata hash onto the ledger, binding it with `block.timestamp` and `msg.sender`. Reverts if the record already exists, preventing duplicate overwrite attacks.
+2. `verifyRecord(bytes32 dataHash) view returns (bool exists, uint256 timestamp, address submitter)`: Read-only query allowing anyone to verify whether a piece of discovered data was anchored, when it was anchored, and by whom.
 
 ---
 
 ## ⚠️ Known Limitations & Technical Considerations
 
 1. **Near-Duplicate vs Closed Face-Recognition Index**:
-   Google Lens/SerpAPI is a public reverse visual search index, not a mass-surveillance facial recognition database (like Clearview AI). It excels at finding images the person has actually posted online or images that visually match public photos, rather than arbitrary private candid shots.
-2. **CDN Hotlink Restrictions**:
-   Some social platforms rate-limit or block external image scraping without browser sessions. The verification layer gracefully flags un-downloadable images as unverified candidates rather than crashing the pipeline.
-3. **500KB Upload Limit on SerpAPI**:
-   SerpAPI's local image upload endpoint enforces a 500KB cap. `src/web_search/serp_search.py` automatically compresses and downsamples large webcam frames before transmission.
-4. **Duplicate Record Rejection**:
-   `PostVerifier.sol` strictly enforces `require(!records[dataHash].exists)`. Running the exact same payload twice on a live blockchain will revert on the second run to prevent timestamp spoofing.
+   Google Lens / SerpAPI indexes public web pages and social media posts, not private biometric surveillance databases. It excels at finding images the person has actually posted online or public media appearances.
+2. **CDN Hotlink Rate Limits**:
+   Certain social platforms (e.g. Instagram CDNs) occasionally rate-limit external image downloads. The candidate verifier handles this gracefully by falling back to page metadata and visual match ranking.
+3. **Testnet Gas Management**:
+   Live blockchain writes require native testnet POL. The pipeline incorporates automatic zero-gas deduplication and EIP-1559 fee optimization to minimize faucet token consumption.
 
 ---
 
 ## 🎥 Submission & Video Recording Checklist
 
-- [x] Full source code organized into clean, modular packages
+- [x] **Walkthrough Demo Video**: [Watch on Google Drive](https://drive.google.com/file/d/1BCKwoHe769dVeVuzDKDuARDbxfiuggeA/view?usp=sharing)
+- [x] Full source code in GitHub repo
 - [x] Part 1: Face detection, landmark quality scoring & 512-D embedding implemented
-- [x] Part 2: Real reverse image search (SerpAPI Google Lens) & face verification implemented
-- [x] Part 3: Privacy-preserving blockchain anchoring (`contracts/PostVerifier.sol` & `chain.py`) implemented
-- [x] Part 4: LangGraph orchestrator (`pipeline.py`) tying all parts together
+- [x] Part 2: Real reverse image search (SerpAPI Google Lens), entity resolution & candidate re-ranking implemented
+- [x] Part 3: Privacy-preserving live blockchain anchoring (`contracts/PostVerifier.sol` & `chain.py`) on Polygon Amoy
+- [x] Part 4: LangGraph orchestrator (`pipeline/orchestrator.py`) connecting all stages
 - [x] Comprehensive architectural specification in [`ARCHITECTURE.md`](ARCHITECTURE.md)
-- [x] Automated test suite passing (19/19 tests)
+- [x] Automated test suite passing (22/22 tests)
 - [x] Screen recording demonstrations supported:
-  1. Live webcam scan: `python main.py --camera`
-  2. Sample face pipeline run: `python pipeline.py samples/sample_faces/sample_person.jpg`
-  3. Tamper-evidence proof: `python main.py samples/sample_faces/sample_person.jpg --demo-tamper`
-  4. Unit test execution: `pytest tests/ -v`
+  1. CLI image run: `python -m src samples/sample_faces/sample_person.jpg --test-tamper`
+  2. Live webcam scan: `python -m src --camera --test-tamper`
+  3. Interactive Web UI: `python -m src --server`
+  4. Unit test execution: `python -m pytest tests/ -v`

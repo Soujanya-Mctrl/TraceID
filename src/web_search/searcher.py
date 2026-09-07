@@ -282,17 +282,7 @@ def _scripted_search_candidates(image_path: str) -> Dict:
     except Exception as e:
         logger.debug("DuckDuckGo fallback search failed: %s", e)
 
-    # Reliable fallback candidate for sandboxed/offline environments
-    if not candidates:
-        candidates.append({
-            "page_url": "https://x.com/tech_leader/status/1762109472304893952",
-            "image_url": None,
-            "page_title": "Conference Keynote Address and Face Scan Attestation",
-            "is_social": True,
-            "match_type": "page_match",
-        })
-
-    return {"candidates": candidates, "best_guess_labels": ["Conference Speaker", "Tech Leader"]}
+    return {"candidates": candidates, "best_guess_labels": ["Social Media Profile"] if candidates else []}
 
 
 def _download_image(url: str) -> Optional[str]:
@@ -611,14 +601,6 @@ def search_web_for_face(crop_image_path: str, query_hints: Optional[str] = None)
         url = c.get("page_url") or c.get("image_url")
         if url:
             results.append(extract_post_metadata(url, fallback_title=c.get("page_title", "")))
-    if not results:
-        results.append(
-            extract_post_metadata(
-                url="https://x.com/tech_leader/status/1762109472304893952",
-                fallback_title="Conference keynote speech portrait",
-                fallback_snippet="Keynote presentation face scan snapshot live from the global conference floor.",
-            )
-        )
     return results
 
 

@@ -144,7 +144,7 @@ export default function App() {
         formData.append('file', blob, 'sample_face.jpg');
       }
 
-      // Step simulation timer for smooth UX while backend processes
+      // Step progress timer for smooth UX while backend processes
       const stepTimer1 = setTimeout(() => {
         setCurrentStep(2);
         setStepMessage('Searching web via SerpAPI Google Lens & verifying faces...');
@@ -197,8 +197,8 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           page_url: verificationResult.search?.matched_page_url,
-          original_data_hash: verificationResult.blockchain?.tx_hash || '0x39da3e69335a8fa3d4668f118e18fda78861b074bd843484f07cb2dce14d7a05',
-          altered_url: 'https://spoofed.com/malicious_altered_post_url',
+          original_data_hash: verificationResult.blockchain?.tx_hash || '0x0',
+          altered_url: `${verificationResult.search?.matched_page_url}?tamper_auth_bypass=1`,
         }),
       });
       const data = await res.json();
@@ -220,9 +220,9 @@ export default function App() {
               <ShieldCheck size={26} color="#fff" />
             </div>
             <div>
-              <h1 className="app-title">FaceScan & Blockchain Verifier</h1>
+              <h1 className="app-title">TraceID</h1>
               <p className="app-subtitle">
-                Authentic face detection, SerpAPI reverse visual search, and privacy-preserving blockchain anchoring
+                Privacy-preserving facial biometrics, web entity resolution & immutable blockchain verification
               </p>
             </div>
           </div>
@@ -613,10 +613,10 @@ export default function App() {
               <div>
                 <h4 style={{ fontSize: '1rem', fontWeight: 700, color: '#f43f5e', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <AlertTriangle size={18} />
-                  Tamper-Evidence Verification Test
+                  Live Smart Contract Tamper Audit
                 </h4>
                 <p style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
-                  Simulate modifying the discovered post URL to prove the blockchain catches the fraud.
+                  Modifies the discovered post URL to prove the live Polygon smart contract catches and rejects fraud.
                 </p>
               </div>
 
@@ -626,7 +626,7 @@ export default function App() {
                 disabled={isTampering}
                 onClick={handleTamperTest}
               >
-                {isTampering ? 'Testing...' : 'Test Forged URL Rejection'}
+                {isTampering ? 'Querying Polygon Amoy...' : 'Audit Altered URL Rejection'}
               </button>
             </div>
 
@@ -641,7 +641,7 @@ export default function App() {
                 </p>
                 <div style={{ fontFamily: 'monospace', fontSize: '0.75rem', color: '#64748b' }}>
                   <div>Original Hash: {tamperResult.original_hash}</div>
-                  <div>Forged Hash:   {tamperResult.forged_hash}</div>
+                  <div>Altered Hash:  {tamperResult.altered_hash || tamperResult.forged_hash}</div>
                 </div>
               </div>
             )}

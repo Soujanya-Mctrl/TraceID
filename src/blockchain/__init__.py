@@ -5,7 +5,6 @@ from .verifier import (
     reverify_against_chain,
     compute_face_hash,
     compute_record_hash,
-    LocalVerifiableChain,
 )
 from .chain import (
     canonical_payload,
@@ -21,7 +20,6 @@ __all__ = [
     "reverify_against_chain",
     "compute_face_hash",
     "compute_record_hash",
-    "LocalVerifiableChain",
     "canonical_payload",
     "hash_payload",
     "store_record",

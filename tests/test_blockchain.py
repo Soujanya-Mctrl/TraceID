@@ -46,20 +46,20 @@ def test_anchor_and_reverify_authentic_data():
 
 def test_tamper_detection():
     emb = [0.05] * 512
-    url = "https://x.com/authentic"
+    url = "https://en.wikipedia.org/wiki/CarryMinati"
     content_fp = "0x" + "b" * 64
 
     receipt = anchor_post_record(
         face_embedding=emb,
         post_url=url,
         content_fingerprint=content_fp,
-        platform="X (Twitter)",
+        platform="Wikipedia / Official",
     )
 
-    # Forged URL
+    # Forged URL parameter to test cryptographic tamper detection
     valid, msg = reverify_against_chain(
         face_embedding=emb,
-        post_url="https://fake-post.com/hacked",
+        post_url=f"{url}?tamper_auth_bypass=1",
         content_fingerprint=content_fp,
         timestamp=receipt["timestamp"],
         record_hash=receipt["record_hash"],

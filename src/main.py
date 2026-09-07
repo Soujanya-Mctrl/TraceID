@@ -14,9 +14,14 @@ Usage:
     python src/main.py --server
 """
 
-import argparse
 import os
 import sys
+
+# Silence TensorFlow C++ runtime logs and oneDNN warnings before any TF imports
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+
+import argparse
 from dotenv import load_dotenv
 
 # Ensure project root is in sys.path
@@ -39,7 +44,7 @@ sys.unraisablehook = _quiet_unraisablehook
 
 def main():
     parser = argparse.ArgumentParser(
-        description="HH Goa 2026: Face Identification & Blockchain Verification System",
+        description="TraceID: Face Identification & Blockchain Verification System",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
@@ -58,9 +63,12 @@ def main():
         help="Capture a live face scan using webcam with real-time Haar stability tracking.",
     )
     parser.add_argument(
+        "--test-tamper",
+        "--audit-tamper",
         "--demo-tamper",
+        dest="test_tamper",
         action="store_true",
-        help="Demonstrate on-chain tamper detection with forged metadata payload.",
+        help="Run live on-chain cryptographic tamper audit proving smart contract rejection of altered data.",
     )
     parser.add_argument(
         "--server",
@@ -90,7 +98,7 @@ def main():
     if args.start_server:
         import uvicorn
         print("=" * 70)
-        print(f"Starting FaceScan Web Application on http://localhost:{args.port}")
+        print(f"Starting TraceID Web Application on http://localhost:{args.port}")
         print("=" * 70)
         uvicorn.run("web.server.server:app", host="0.0.0.0", port=args.port, reload=True)
         return
@@ -110,10 +118,10 @@ def main():
     # Mode 3: Live Camera or File Pipeline
     from src.pipeline.orchestrator import run
     if args.use_camera:
-        run(use_camera=True, demo_tamper=args.demo_tamper)
+        run(use_camera=True, test_tamper=args.test_tamper)
     else:
         img_path = args.image_path or "samples/sample_faces/sample_person.jpg"
-        run(image_path=img_path, use_camera=False, demo_tamper=args.demo_tamper)
+        run(image_path=img_path, use_camera=False, test_tamper=args.test_tamper)
 
 
 if __name__ == "__main__":

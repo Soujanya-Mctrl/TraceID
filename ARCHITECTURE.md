@@ -1,7 +1,9 @@
-# System Architecture & Technical Specification 🛡️🔗
+# TraceID — System Architecture & Technical Specification 🛡️🔗
 
-> **HH Goa 2026 Shortlisting Task 3: Face Identification & Blockchain Verification**  
-> An end-to-end, privacy-preserving pipeline connecting computer vision, real-world reverse image search, and immutable blockchain verification.
+> **TraceID** (HH Goa 2026 Shortlisting Task 3: Face Identification & Blockchain Verification)  
+> An end-to-end, privacy-preserving pipeline connecting computer vision, real-world reverse visual search with entity resolution, and immutable blockchain verification.
+
+[![Watch Demo Video](https://img.shields.io/badge/📺_Demo_Video-Watch_on_Google_Drive-blue?style=for-the-badge&logo=google-drive)](https://drive.google.com/file/d/1BCKwoHe769dVeVuzDKDuARDbxfiuggeA/view?usp=sharing)
 
 ---
 
@@ -32,31 +34,36 @@ flowchart TD
         C --> F[30% Contextual Padded Crop]
     end
 
-    subgraph Phase2["Phase 2: Reverse Visual Search & Verification"]
-        F --> G[SerpAPI Image Upload API]
-        G -->|POST /image| H[Ephemeral image_id 10 min]
-        H --> I[Google Lens Search type=all]
-        I --> J[Harvest Candidates: Exact & Visual Matches]
-        J --> K[Download Candidate Images]
-        K --> L[In-Image Face Detector]
+    subgraph Phase2["Phase 2: Reverse Visual Search, Entity Resolution & Re-Ranking"]
+        F --> G[SerpAPI Image Upload API: POST /image]
+        G -->|Ephemeral image_id 10 min| H[Google Lens Search: type=all]
+        H --> I[Harvest Candidates: Exact & Visual Matches]
+        I --> J[Wikipedia REST API Entity Resolver]
+        J --> K[URL Classifier: Detect Reels vs Canonical Profiles]
+        K --> L[Download Candidate Images & Run In-Image MTCNN]
         E --> M[Cosine Similarity Verification >= 0.55]
         L --> M
-        M -->|Rank: Social > Web| N[Top Verified Candidate Post]
+        M --> N[Multi-Factor Candidate Re-Ranking Engine]
+        N -->|Select Top Ranked| O[Top Verified Candidate Post]
     end
 
-    subgraph Phase3["Phase 3: Privacy-Preserving Blockchain Ledger"]
-        N --> O[Canonical Payload Builder: Post Metadata Only]
-        O --> P[Deterministic Keccak-256 Hashing]
-        P -->|32-byte dataHash| Q[PostVerifier.sol Polygon Amoy]
-        Q --> R[Read-back & Re-Verification]
-        R --> S{dataHash Exists & Matches?}
-        S -->|Yes| T[VERIFIED: Immutable Ledger Match]
-        S -->|No / Altered| U[TAMPER DETECTED: Discrepancy Flagged]
+    subgraph Phase3["Phase 3: Privacy-Preserving Blockchain Ledger (Polygon Amoy)"]
+        O --> P[Canonical Payload Builder: Post Metadata Only]
+        P --> Q[Deterministic Keccak-256 Hashing]
+        Q -->|32-byte dataHash| R{On-Chain State Check: verifyRecord}
+        R -->|Already Anchored| S[Zero-Gas Cache Hit: Read Immutable State]
+        R -->|New Record| T[EIP-1559 Type-2 Tx: PostVerifier.sol]
+        T --> U[Polygon Amoy Bor Consensus: Block Anchor]
+        U --> V[On-Chain Read-back & Verification]
+        S --> V
+        V --> W{dataHash Exists & Matches?}
+        W -->|Yes| X[NO FRAUD DETECTED: 100% Authentic & Immutable]
+        W -->|No / Altered| Y[FRAUD DETECTED: Cryptographic Mismatch Flagged]
     end
 
-    subgraph Phase4["Phase 4: LangGraph Orchestrator"]
+    subgraph Phase4["Phase 4: LangGraph Orchestrator & Audit Receipt"]
         Phase1 --> Phase2 --> Phase3
-        Phase3 --> V[Audit Receipt JSON: output/verification_receipt.json]
+        Phase3 --> Z[Audit Receipt JSON: output/verification_receipt.json]
     end
 ```
 
@@ -93,7 +100,7 @@ To prevent bad embeddings from entering the pipeline, every frame is evaluated a
 
 ---
 
-### Phase 2: Web & Social Media Visual Search with Face Verification
+### Phase 2: Web & Social Visual Search, Entity Resolution & Re-Ranking
 
 #### 1. Dual-Engine Visual Search Backend
 - **SerpAPI (Google Lens)** (`src/web_search/serp_search.py`):
@@ -103,7 +110,24 @@ To prevent bad embeddings from entering the pipeline, every frame is evaluated a
 - **Google Cloud Vision Backend** (`src/web_search/searcher.py`): Direct base64 Web Detection query (`pagesWithMatchingImages` + `visuallySimilarImages`).
 - **Scripted Fallback**: Deterministic metadata provider for offline/air-gapped evaluations.
 
-#### 2. Downstream Face Verification Layer (The Critical Anti-Hallucination Barrier)
+#### 2. Entity Resolution Engine (`src/web_search/entity_resolver.py`)
+Search engines often return ambiguous titles or uncurated scraper URLs. To establish authentic identity grounding:
+- **Entity Identification**: Queries the Wikipedia REST API (`https://en.wikipedia.org/api/rest_v1/page/summary/{title}`) using entity names extracted from Google Lens knowledge panels or top candidate page titles.
+- **Canonical Enrichment**: Extracts official descriptions, full biographical abstracts, thumbnail image URLs, and canonical entity URLs.
+- **URL Classification**: Distinguishes ephemeral, spammy media links (`/reel/`, `/shorts/`, `/pin/`, `/status/`) from authoritative canonical profiles (`wikipedia.org`, `imdb.com`, `forbes.com`, `linkedin.com/in/`). Clean profile roots are generated automatically.
+
+#### 3. Multi-Factor Candidate Re-Ranking Engine
+Candidates are prioritized and scored using a comprehensive multi-factor objective function:
+$$\text{Score}(c) = S_{\text{authority}}(c) + S_{\text{biometric}}(c) + S_{\text{entity}}(c) + S_{\text{exact}}(c) - P_{\text{reel}}(c)$$
+
+Where:
+- **$S_{\text{authority}}$**: $+50$ points for authoritative domains (`wikipedia.org`, `imdb.com`, `forbes.com`, `linkedin.com`). $+30$ points for mainstream social platforms.
+- **$S_{\text{biometric}}$**: $+100 \times \text{sim}(\vec{u}, \vec{v})$ if face verification succeeded on the candidate image.
+- **$S_{\text{entity}}$**: $+25$ points if the candidate URL or title matches the resolved entity identity.
+- **$S_{\text{exact}}$**: $+15$ points for exact visual matches returned by the search engine.
+- **$P_{\text{reel}}$**: $-50$ penalty for ephemeral short-form clips (`/reel/`, `/shorts/`, `/pin/`) to prioritize permanent identity profiles.
+
+#### 4. Downstream In-Image Face Verification (The Anti-Hallucination Barrier)
 Visual search engines return "visually similar" images (e.g. similar clothing, similar lighting, or generic stock photos). **This pipeline never blindly trusts search engine matches.**
 - The candidate image is downloaded in-memory.
 - It is passed through the same MTCNN detector.
@@ -111,12 +135,10 @@ Visual search engines return "visually similar" images (e.g. similar clothing, s
 - **Cosine Similarity Evaluation**:
   $$\text{sim}(\vec{u}, \vec{v}) = \frac{\vec{u} \cdot \vec{v}}{\|\vec{u}\| \|\vec{v}\|}$$
 - If $\max(\text{sim}) \ge 0.55$ (`VERIFY_SIMILARITY_THRESHOLD`), the post is flagged as `VERIFIED: True`.
-- **Ranking Hierarchy**:
-  $$\text{Verified Social (LinkedIn/X/IG)} > \text{Verified Web} > \text{Unverified Fallback (Explicitly Flagged)}$$
 
 ---
 
-### Phase 3: Privacy-Preserving Blockchain Verification
+### Phase 3: Privacy-Preserving Blockchain Verification & Gas Economics
 
 #### 1. The Biometric Privacy Principle
 > **Immutable ledgers are public and permanent.**  
@@ -149,7 +171,7 @@ def hash_payload(payload: Dict) -> bytes:
 - Produces a deterministic 32-byte (`bytes32`) hash invariant to key order or formatting quirks.
 
 #### 3. Solidity Smart Contract (`contracts/PostVerifier.sol`)
-Deployed on **Polygon Amoy Testnet** (or local EVM RPC):
+Deployed on **Polygon Amoy Testnet** (Chain ID `80002`):
 ```solidity
 contract PostVerifier {
     struct Record {
@@ -185,9 +207,20 @@ contract PostVerifier {
 }
 ```
 
-#### 4. Re-Verification & Tamper Detection
-- **Authentic Data**: Querying `verifyRecord(dataHash)` returns `exists = true` and the exact block timestamp.
-- **Tampered Data**: If even a single character in the post URL or metadata is altered, `keccak256(canonical)` yields an entirely different 32-byte hash. Querying the chain returns `exists = false`, immediately flagging tamper detection.
+#### 4. EIP-1559 Dynamic Fee Economics & Zero-Gas Deduplication
+Polygon Amoy operates on Bor consensus, which introduces distinct fee and consensus dynamics:
+- **Proof-of-Authority (PoA) Bor Middleware**: Polygon Bor blocks contain 105-byte extraData (storing validator signatures). Standard Web3 implementations trigger `ExtraDataLengthError`. The pipeline injects `ExtraDataToPOAMiddleware` into the Web3 middleware onion.
+- **EIP-1559 Dynamic Fee Optimization**: Legacy `gasPrice` calls on Amoy overestimate miner tips (up to 80 Gwei), causing gas starvation (`insufficient funds: balance < tx cost`). The pipeline builds **Type-2 EIP-1559** transactions:
+  - `maxPriorityFeePerGas`: $25\text{ Gwei}$
+  - `maxFeePerGas`: $35\text{ Gwei}$
+  - `gasLimit`: $76,000$ units
+  - **Result**: Slashes write costs by 87% from $\sim 0.02025\text{ POL}$ to $\sim 0.00262\text{ POL}$.
+- **Zero-Gas On-Chain Deduplication**: Before broadcasting a transaction, the pipeline queries `verifyRecord(dataHash)`. If the record already exists on-chain, it immediately returns the authentic on-chain state without spending any POL ($\text{Cost} = 0.00\text{ POL}$), protecting against revert errors and conserving testnet funds.
+- **Multi-RPC Failover Layer**: Automatically rotates across RPC endpoints (`https://polygon-amoy.drpc.org`, `https://rpc-amoy.polygon.technology`, `https://polygon-amoy-bor-rpc.publicnode.com`) to ensure zero-downtime execution.
+
+#### 5. Authenticity Verification & Tamper Detection
+- **Authentic Verification**: Calling `verifyRecord(dataHash)` returns `exists = true`, block timestamp, and submitter address. Confirms `NO FRAUD DETECTED -- 100% Authentic & Immutable on Polygon Amoy!`.
+- **Tamper Evidence**: If even a single byte or URL query parameter of the post data is altered, the Keccak-256 hash changes completely. The smart contract query returns `exists = false`, proving cryptographic tamper detection.
 
 ---
 
@@ -230,7 +263,8 @@ stateDiagram-v2
 | **Search Hallucinations** | Candidate image downloading + secondary deep neural network face encoding + cosine similarity thresholding ($\ge 0.55$). |
 | **Silent Duplicate Overwrites** | `PostVerifier.sol` enforces `require(!records[dataHash].exists)`, preventing replay overwrites of historical timestamps. |
 | **JSON Serialization Drift** | Strict key sorting (`sort_keys=True`) and compact separators (`separators=(',', ':')`) ensure cross-platform hash identity. |
-| **API Limit Exhaustion** | SerpAPI `type=all` single-credit optimization; automatic image compression $< 500\text{KB}$; offline simulated chain fallback. |
+| **Polygon Bor ExtraData Length** | Injected `ExtraDataToPOAMiddleware` prevents 105-byte header decoding crashes. |
+| **Gas Exhaustion / Front-Running** | Type-2 EIP-1559 fee specification with priority fee caps and zero-gas deduplication cache checks. |
 
 ---
 
@@ -243,9 +277,12 @@ stateDiagram-v2
 | **Face Crop Padding** | 30% outward contextual margin |
 | **Quality Score Floor** | $0.55$ normalized threshold |
 | **Search Engine** | SerpAPI Google Lens (`engine=google_lens`, `type=all`) |
+| **Entity Resolution** | Wikipedia REST API Canonical Entity Resolver |
 | **Candidate Verification Threshold** | $\text{Cosine Similarity} \ge 0.55$ |
 | **Hashing Algorithm** | Keccak-256 (`Web3.keccak`) |
-| **Target Blockchain** | Polygon Amoy Testnet (EVM) / In-process Verifiable Ledger |
-| **Smart Contract** | [`contracts/PostVerifier.sol`](contracts/PostVerifier.sol) |
+| **Target Blockchain** | Polygon Amoy Testnet (Chain ID `80002`) |
+| **Smart Contract** | [`contracts/PostVerifier.sol`](contracts/PostVerifier.sol) (`0xB066F1C56c530189876c4c538D089997Fb5C4398`) |
+| **EVM Transaction Type** | EIP-1559 Type-2 ($25\text{ Gwei}$ Priority, $35\text{ Gwei}$ Max) |
 | **Pipeline Framework** | LangGraph (`StateGraph`) |
-| **Test Coverage** | 19 automated unit & integration tests (`pytest tests/ -v`) |
+| **Test Coverage** | 22 automated unit & integration tests (`pytest tests/ -v`) |
+```
